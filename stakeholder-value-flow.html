@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BPM — Stakeholder Value-Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     COLOR — fully neutral for now. Every color is a variable so
+     a single edit here swaps the whole scheme once hue is added.
+     ============================================================ */
+  :root {
+    --bg:          #0F0F0F;
+    --panel:       #151412;
+    --stroke:      #2E2E2E;   /* node outlines */
+    --ghost:       #262626;   /* toggled-off edges */
+    --text:        #E8E2D9;
+    --text-dim:    #7A7570;
+    --opportunity: #F2EDE6;   /* brightest — markers sit above the data layer */
+
+    /* five value types, stepped greys */
+    --emotional:   #E0DBD4;
+    --financial:   #BFB9B2;
+    --functional:  #9E9891;
+    --identity:    #7D7770;
+    --meaningful:  #837D74; /* lightened from spec's #5C5750 so it stays legible alone against --bg */
+
+    --font-head: 'Libre Baskerville', Georgia, serif;
+    --font-body: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #app {
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  header {
+    padding: 28px 36px 14px;
+    border-bottom: 1px solid var(--stroke);
+  }
+
+  header h1 {
+    font-family: var(--font-head);
+    font-weight: 400;
+    font-style: normal;
+    font-size: 22px;
+    letter-spacing: 0.01em;
+    margin: 0 0 4px;
+    color: var(--text);
+  }
+
+  header p {
+    font-size: 12.5px;
+    color: var(--text-dim);
+    margin: 0;
+    max-width: 640px;
+    line-height: 1.5;
+  }
+
+  /* ============================================================
+     CONTROLS — two visually distinct groups
+     ============================================================ */
+  #controls {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 14px 36px;
+    border-bottom: 1px solid var(--stroke);
+    flex-wrap: wrap;
+  }
+
+  #value-toggles {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .group-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 12px 6px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--stroke);
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+  }
+
+  .pill:hover { border-color: #4a4a4a; }
+
+  .pill .swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .pill.off {
+    opacity: 0.4;
+  }
+
+  .pill.off .swatch {
+    background: var(--ghost) !important;
+    box-shadow: none !important;
+  }
+
+  .control-divider {
+    width: 1px;
+    align-self: stretch;
+    background: var(--stroke);
+    margin: 0 2px;
+  }
+
+  #opportunity-toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .switch-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .switch {
+    width: 34px;
+    height: 18px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--stroke);
+    position: relative;
+    transition: border-color 0.2s ease;
+    flex: none;
+  }
+
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: transform 0.22s ease, background 0.22s ease;
+  }
+
+  .switch-row.on .switch {
+    border-color: var(--opportunity);
+  }
+
+  .switch-row.on .switch::after {
+    transform: translateX(16px);
+    background: var(--opportunity);
+  }
+
+  .switch-row .label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .switch-row .sublabel {
+    font-size: 10.5px;
+    color: var(--text-dim);
+  }
+
+  /* ============================================================
+     CANVAS
+     ============================================================ */
+  #canvas-wrap {
+    position: relative;
+    overflow: hidden;
+  }
+
+  svg#diagram {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .node-label {
+    font-family: var(--font-body);
+    font-size: 11.5px;
+    fill: var(--text);
+    pointer-events: none;
+  }
+
+  .node-label.core {
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .node-group-label {
+    font-family: var(--font-mono);
+    font-size: 8.5px;
+    fill: var(--text-dim);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+
+  circle.node {
+    fill: var(--bg);
+    stroke: var(--stroke);
+    stroke-width: 1.2px;
+    cursor: grab;
+    transition: stroke 0.2s ease, stroke-width 0.2s ease;
+  }
+
+  circle.node.core {
+    stroke-width: 1.6px;
+  }
+
+  circle.node.highlight {
+    stroke: var(--text);
+  }
+
+  circle.node:active { cursor: grabbing; }
+
+  .edge-line {
+    fill: none;
+    stroke-linecap: round;
+    transition: opacity 0.3s ease, stroke-width 0.2s ease;
+  }
+
+  .edge-hit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 16px;
+    cursor: pointer;
+  }
+
+  .edge-group.dim .edge-line {
+    opacity: 0.1;
+  }
+
+  .edge-group.highlight .edge-line {
+    opacity: 1 !important;
+  }
+
+  .edge-group.ghost .edge-line {
+    opacity: 0.14;
+  }
+
+  .edge-group.ghost .particle {
+    animation-play-state: paused;
+    opacity: 0;
+  }
+
+  .edge-group.dim .particle {
+    opacity: 0;
+  }
+
+  .particle {
+    fill: var(--text);
+    animation-name: travel;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+
+  @keyframes travel {
+    from { offset-distance: 0%; }
+    to   { offset-distance: 100%; }
+  }
+
+  /* opportunity overlay */
+  .opp-marker {
+    cursor: pointer;
+  }
+
+  .opp-marker text {
+    fill: var(--opportunity);
+    font-family: var(--font-body);
+    text-anchor: middle;
+    dominant-baseline: central;
+    pointer-events: none;
+  }
+
+  .opp-marker .opp-glyph {
+    font-size: 15px;
+  }
+
+  .opp-marker.primary .opp-glyph {
+    font-size: 21px;
+  }
+
+  .opp-marker .opp-pulse {
+    fill: none;
+    stroke: var(--opportunity);
+    opacity: 0.35;
+  }
+
+  /* ============================================================
+     TOOLTIP
+     ============================================================ */
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    max-width: 300px;
+    background: #1a1917;
+    border: 1px solid var(--stroke);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 12px));
+    transition: opacity 0.12s ease;
+    z-index: 50;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+
+  #tooltip.visible { opacity: 1; }
+
+  #tooltip .t-route {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+
+  #tooltip .t-meta {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--text-dim);
+  }
+
+  #tooltip .t-swatch {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    margin-right: 5px;
+  }
+
+  /* ============================================================
+     LEGEND
+     ============================================================ */
+  #legend {
+    position: absolute;
+    left: 28px;
+    bottom: 24px;
+    background: rgba(15,15,15,0.82);
+    border: 1px solid var(--stroke);
+    border-radius: 8px;
+    padding: 14px 18px;
+    backdrop-filter: blur(4px);
+    max-width: 250px;
+  }
+
+  #legend h2 {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-dim);
+    margin: 0 0 10px;
+    font-weight: 500;
+  }
+
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 11.5px;
+    margin-bottom: 7px;
+    color: var(--text);
+  }
+
+  .legend-row:last-child { margin-bottom: 0; }
+
+  .legend-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+  }
+
+  .legend-line {
+    width: 22px;
+    height: 0;
+    border-top: 1.6px solid var(--text-dim);
+    flex: none;
+  }
+
+  .legend-line.dashed {
+    border-top-style: dashed;
+  }
+
+  .legend-line.thick {
+    border-top-width: 3px;
+  }
+
+  .legend-sep {
+    height: 1px;
+    background: var(--stroke);
+    margin: 10px 0;
+  }
+
+  .legend-note {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Stakeholder Value-Flow — BPM</h1>
+    <p>How five kinds of value move between stakeholders in the fitness-app ecosystem. Line weight is volume, direction is arrowed, and absence is data — watch for where a flow runs one way only.</p>
+  </header>
+
+  <div id="controls">
+    <div id="value-toggles">
+      <span class="group-label">Value layers</span>
+      <!-- pills injected by JS -->
+    </div>
+    <div class="control-divider"></div>
+    <div id="opportunity-toggle-wrap">
+      <div class="switch-row" id="opp-toggle">
+        <div class="switch"></div>
+        <div>
+          <div class="label">Opportunity overlay</div>
+          <div class="sublabel">Annotations, not a value type</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="canvas-wrap">
+    <svg id="diagram" viewBox="0 0 1300 950" preserveAspectRatio="xMidYMid meet"></svg>
+
+    <div id="legend">
+      <h2>Legend</h2>
+      <div id="legend-types"></div>
+      <div class="legend-sep"></div>
+      <div class="legend-row"><span class="legend-line"></span> Research finding</div>
+      <div class="legend-row"><span class="legend-line dashed"></span> Design hypothesis</div>
+      <div class="legend-row"><span class="legend-line thick"></span> Line weight = flow volume</div>
+      <div class="legend-sep"></div>
+      <div class="legend-note">Toggle a layer off to isolate the rest. Opportunity overlay adds analysis markers on top — it is not a sixth value type.</div>
+    </div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+/* ================================================================
+   DATA — edit these arrays; render code below never needs to change.
+   ================================================================ */
+
+// NODES: id, label, group, fixed x/y (canvas is 1300x950), radius
+const NODES = [
+  { id: 'user',        label: 'The User',                          group: 'core',    x: 640, y: 460, r: 38 },
+  { id: 'bpm',         label: 'BPM',                                group: 'core',    x: 760, y: 365, r: 32 },
+
+  { id: 'funders',     label: 'Funders (VC / angels)',              group: 'funding', x: 200, y: 150, r: 26 },
+
+  { id: 'competitors', label: 'Competitor apps',                    group: 'market',  x: 1080, y: 140, r: 26 },
+  { id: 'structures',  label: 'External structures',                group: 'market',  x: 1120, y: 540, r: 26 },
+
+  { id: 'platforms',   label: 'Devices & platforms',                group: 'supply',  x: 1010, y: 800, r: 26 },
+
+  { id: 'social',      label: 'Social circle',                      group: 'society', x: 120, y: 420, r: 26 },
+  { id: 'society',     label: 'Wellness / optimization culture',    group: 'society', x: 420, y: 890, r: 26 },
+  { id: 'media',       label: 'Fitness media & influencers',        group: 'society', x: 640, y: 70,  r: 26 },
+
+  { id: 'policy',      label: 'Health data policy',                 group: 'legal',   x: 620, y: 905, r: 26 },
+];
+
+// EDGES: source, target, type, weight (1-3), status ('finding' | 'hypothesis'), optional note
+const EDGES = [
+  // --- financial ---
+  { source: 'funders',     target: 'competitors', type: 'financial',  weight: 3, status: 'finding' },
+  { source: 'funders',     target: 'bpm',          type: 'financial',  weight: 2, status: 'hypothesis' },
+  { source: 'competitors', target: 'funders',      type: 'financial',  weight: 3, status: 'finding' },
+  { source: 'user',        target: 'competitors',  type: 'financial',  weight: 2, status: 'finding' },
+  { source: 'user',        target: 'structures',   type: 'financial',  weight: 2, status: 'finding' },
+  { source: 'user',        target: 'platforms',    type: 'financial',  weight: 2, status: 'finding' },
+  { source: 'bpm',         target: 'funders',      type: 'financial',  weight: 1, status: 'hypothesis' },
+
+  // --- functional ---
+  { source: 'platforms',   target: 'bpm',          type: 'functional', weight: 3, status: 'finding' },
+  { source: 'platforms',   target: 'competitors',  type: 'functional', weight: 3, status: 'finding' },
+  { source: 'bpm',         target: 'user',         type: 'functional', weight: 2, status: 'hypothesis' },
+  { source: 'competitors', target: 'user',         type: 'functional', weight: 3, status: 'finding' },
+  { source: 'structures',  target: 'user',         type: 'functional', weight: 3, status: 'finding' },
+  { source: 'user',        target: 'platforms',    type: 'functional', weight: 3, status: 'finding' },
+  { source: 'policy',      target: 'bpm',          type: 'functional', weight: 1, status: 'finding' },
+  { source: 'policy',      target: 'competitors',  type: 'functional', weight: 1, status: 'finding' },
+
+  // --- emotional ---
+  { source: 'competitors', target: 'user',         type: 'emotional',  weight: 3, status: 'finding' },
+  { source: 'bpm',         target: 'user',         type: 'emotional',  weight: 3, status: 'hypothesis' },
+  { source: 'society',     target: 'user',         type: 'emotional',  weight: 3, status: 'finding' },
+  { source: 'media',       target: 'user',         type: 'emotional',  weight: 2, status: 'finding' },
+  { source: 'social',      target: 'user',         type: 'emotional',  weight: 2, status: 'finding' },
+  { source: 'user',        target: 'social',       type: 'emotional',  weight: 2, status: 'finding' },
+  { source: 'structures',  target: 'user',         type: 'emotional',  weight: 2, status: 'finding',
+    note: 'Dual-natured — supportive when framed as commitment, judging when framed comparatively.' },
+
+  // --- identity ---
+  { source: 'user',        target: 'structures',   type: 'identity',   weight: 3, status: 'finding' },
+  { source: 'competitors', target: 'user',         type: 'identity',   weight: 2, status: 'finding' },
+  { source: 'bpm',         target: 'user',         type: 'identity',   weight: 2, status: 'hypothesis' },
+  { source: 'society',     target: 'user',         type: 'identity',   weight: 2, status: 'finding' },
+  { source: 'user',        target: 'society',      type: 'identity',   weight: 1, status: 'finding' },
+
+  // --- meaningful --- (deliberately NO user -> bpm edge here — the absence is the point)
+  { source: 'structures',  target: 'user',         type: 'meaningful', weight: 1, status: 'finding' },
+  { source: 'bpm',         target: 'user',         type: 'meaningful', weight: 2, status: 'hypothesis' },
+  { source: 'social',      target: 'user',         type: 'meaningful', weight: 1, status: 'hypothesis' },
+];
+
+// Value types in fixed legend/toggle order
+const VALUE_TYPES = [
+  { id: 'emotional',  label: 'Emotional'  },
+  { id: 'financial',  label: 'Financial'  },
+  { id: 'functional', label: 'Functional' },
+  { id: 'identity',   label: 'Identity'   },
+  { id: 'meaningful', label: 'Meaningful' },
+];
+
+// OPPORTUNITY OVERLAY — annotation markers, not a value type
+const OPPORTUNITIES = [
+  {
+    id: 'opp-1',
+    primary: false,
+    anchor: () => midpoint(nodeById('funders'), nodeById('bpm')),
+    label: 'Funder loop asymmetry — the engagement machine is financially self-sustaining; a tending model has no equivalent return path.',
+  },
+  {
+    id: 'opp-2',
+    primary: true,
+    anchor: () => {
+      const e = findEdge('bpm', 'user', 'meaningful');
+      const m = edgeMidpoint(e);
+      return { x: m.x + 34, y: m.y - 18 };
+    },
+    label: 'The meaningful layer is nearly empty. Three thin edges, two of them hypotheses. This is the whitespace.',
+  },
+  {
+    id: 'opp-3',
+    primary: false,
+    anchor: () => {
+      const u = nodeById('user');
+      return { x: u.x + u.r + 20, y: u.y - u.r - 4 };
+    },
+    label: 'The user is a terminal node for judgment — emotional and identity value arrive, almost none returns.',
+  },
+  {
+    id: 'opp-4',
+    primary: false,
+    anchor: () => edgeMidpoint(findEdge('social', 'user', 'meaningful')),
+    label: 'Unclaimed: private accountability without becoming social fitness.',
+  },
+];
+
+/* ================================================================
+   RENDER CODE — should not need edits when data above changes.
+   ================================================================ */
+
+const svg = d3.select('#diagram');
+const nodeMap = new Map(NODES.map(n => [n.id, n]));
+function nodeById(id) { return nodeMap.get(id); }
+function findEdge(source, target, type) {
+  return EDGES.find(e => e.source === source && e.target === target && e.type === type);
+}
+function midpoint(a, b) { return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }; }
+
+function pointToward(from, to, dist) {
+  const dx = to.x - from.x, dy = to.y - from.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: from.x + (dx / len) * dist, y: from.y + (dy / len) * dist };
+}
+
+// Assign curvature: sign separates A->B from B->A, magnitude fans parallel
+// edges that share the exact same directed pair (e.g. multiple types).
+const directedGroups = new Map();
+EDGES.forEach(e => {
+  const key = e.source + '->' + e.target;
+  if (!directedGroups.has(key)) directedGroups.set(key, []);
+  directedGroups.get(key).push(e);
+});
+EDGES.forEach(e => {
+  const key = e.source + '->' + e.target;
+  const group = directedGroups.get(key);
+  const idx = group.indexOf(e);
+  const sortedPair = [e.source, e.target].slice().sort();
+  const sign = e.source === sortedPair[0] ? 1 : -1;
+  e._curveSign = sign;
+  e._curveMag = 30 + idx * 18;
+  e._id = 'edge-' + key.replace('->', '-') + '-' + e.type + '-' + idx;
+});
+
+const STROKE_WIDTH = { 1: 1.4, 2: 2.6, 3: 4.2 };
+const PARTICLE_DURATION = { 1: 11, 2: 8, 3: 5.5 };
+
+function computeGeometry(e) {
+  const s = nodeById(e.source), t = nodeById(e.target);
+  const dx = t.x - s.x, dy = t.y - s.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const nx = -dy / dist, ny = dx / dist;
+  const mx = (s.x + t.x) / 2, my = (s.y + t.y) / 2;
+  // clamp curvature to the chord length so short edges (e.g. bpm<->user) fan
+  // out cleanly instead of looping back on themselves
+  const cappedMag = Math.min(e._curveMag, dist * 0.42);
+  const offset = e._curveSign * cappedMag;
+  const cp = { x: mx + nx * offset, y: my + ny * offset };
+  const start = pointToward(s, cp, s.r);
+  const end = pointToward(t, cp, t.r + 9);
+  e._geo = { start, cp, end };
+  return e._geo;
+}
+
+function pathD(geo) {
+  return `M${geo.start.x},${geo.start.y} Q${geo.cp.x},${geo.cp.y} ${geo.end.x},${geo.end.y}`;
+}
+
+function edgeMidpoint(e) {
+  const g = e._geo || computeGeometry(e);
+  const t = 0.5;
+  const x = (1 - t) * (1 - t) * g.start.x + 2 * (1 - t) * t * g.cp.x + t * t * g.end.x;
+  const y = (1 - t) * (1 - t) * g.start.y + 2 * (1 - t) * t * g.cp.y + t * t * g.end.y;
+  return { x, y };
+}
+
+// --- defs: arrowheads, one per value type ---
+const defs = svg.append('defs');
+VALUE_TYPES.forEach(vt => {
+  defs.append('marker')
+    .attr('id', 'arrow-' + vt.id)
+    .attr('viewBox', '0 0 10 10')
+    .attr('refX', 8.5)
+    .attr('refY', 5)
+    .attr('markerWidth', 6.5)
+    .attr('markerHeight', 6.5)
+    .attr('orient', 'auto-start-reverse')
+    .append('path')
+    .attr('d', 'M0,0 L10,5 L0,10 z')
+    .attr('fill', `var(--${vt.id})`);
+});
+
+const edgeLayer = svg.append('g').attr('id', 'edge-layer');
+const nodeLayer = svg.append('g').attr('id', 'node-layer');
+const oppLayer = svg.append('g').attr('id', 'opp-layer');
+
+// --- edges ---
+const edgeGroups = edgeLayer.selectAll('g.edge-group')
+  .data(EDGES)
+  .join('g')
+  .attr('class', d => `edge-group type-${d.type}`)
+  .attr('id', d => d._id);
+
+edgeGroups.each(function (d) {
+  computeGeometry(d);
+  const g = d3.select(this);
+
+  g.append('path')
+    .attr('class', 'edge-hit')
+    .attr('d', pathD(d._geo));
+
+  g.append('path')
+    .attr('class', 'edge-line')
+    .attr('d', pathD(d._geo))
+    .attr('stroke', `var(--${d.type})`)
+    .attr('stroke-width', STROKE_WIDTH[d.weight])
+    .attr('stroke-dasharray', d.status === 'hypothesis' ? '7,6' : null)
+    .attr('marker-end', `url(#arrow-${d.type})`);
+
+  const particleGroup = g.append('g').attr('class', 'particle-layer');
+  const n = d.weight;
+  const dur = PARTICLE_DURATION[d.weight];
+  for (let i = 0; i < n; i++) {
+    particleGroup.append('circle')
+      .attr('class', 'particle')
+      .attr('r', 1.6 + d.weight * 0.35)
+      .style('offset-path', `path('${pathD(d._geo)}')`)
+      .style('animation-duration', dur + 's')
+      .style('animation-delay', (-(i / n) * dur) + 's');
+  }
+});
+
+function refreshEdgeGeometry(e) {
+  computeGeometry(e);
+  const g = d3.select('#' + e._id);
+  const d = pathD(e._geo);
+  g.select('.edge-hit').attr('d', d);
+  g.select('.edge-line').attr('d', d);
+  g.selectAll('.particle').style('offset-path', `path('${d}')`);
+}
+
+// --- nodes ---
+const nodeGroups = nodeLayer.selectAll('g.node-group')
+  .data(NODES)
+  .join('g')
+  .attr('class', 'node-group')
+  .attr('id', d => 'node-' + d.id)
+  .attr('transform', d => `translate(${d.x},${d.y})`)
+  .call(d3.drag().on('drag', dragged));
+
+nodeGroups.append('circle')
+  .attr('class', d => 'node' + (d.group === 'core' ? ' core' : ''))
+  .attr('r', d => d.r);
+
+nodeGroups.append('text')
+  .attr('class', 'node-group-label')
+  .attr('y', d => -(d.r + 20))
+  .attr('text-anchor', 'middle')
+  .text(d => d.group === 'core' ? '' : d.group);
+
+nodeGroups.append('text')
+  .attr('class', d => 'node-label' + (d.group === 'core' ? ' core' : ''))
+  .attr('y', d => d.r + 16)
+  .attr('text-anchor', 'middle')
+  .each(function (d) {
+    const words = d.label.split(' ');
+    const lines = [];
+    let line = '';
+    words.forEach(w => {
+      const test = (line ? line + ' ' : '') + w;
+      if (test.length > 20 && line) { lines.push(line); line = w; }
+      else line = test;
+    });
+    if (line) lines.push(line);
+    const sel = d3.select(this);
+    lines.forEach((l, i) => {
+      sel.append('tspan')
+        .attr('x', 0)
+        .attr('dy', i === 0 ? 0 : '1.2em')
+        .text(l);
+    });
+  });
+
+nodeGroups
+  .on('mouseenter', function (event, d) {
+    const connected = new Set(
+      EDGES.filter(e => e.source === d.id || e.target === d.id).map(e => e._id)
+    );
+    edgeGroups.classed('dim', e => !connected.has(e._id));
+    edgeGroups.classed('highlight', e => connected.has(e._id));
+    d3.select(this).select('circle.node').classed('highlight', true);
+  })
+  .on('mouseleave', function () {
+    edgeGroups.classed('dim', false).classed('highlight', false);
+    d3.select(this).select('circle.node').classed('highlight', false);
+  });
+
+function dragged(event, d) {
+  d.x = event.x;
+  d.y = event.y;
+  d3.select(this).attr('transform', `translate(${d.x},${d.y})`);
+  EDGES.forEach(e => {
+    if (e.source === d.id || e.target === d.id) refreshEdgeGeometry(e);
+  });
+  renderOpportunities();
+}
+
+/* ================================================================
+   OPPORTUNITY OVERLAY
+   ================================================================ */
+function renderOpportunities() {
+  const active = document.getElementById('opp-toggle').classList.contains('on');
+  const sel = oppLayer.selectAll('g.opp-marker').data(active ? OPPORTUNITIES : [], d => d.id);
+
+  sel.exit().remove();
+
+  const enter = sel.enter().append('g')
+    .attr('class', d => 'opp-marker' + (d.primary ? ' primary' : ''))
+    .attr('id', d => 'opp-' + d.id);
+
+  enter.append('circle').attr('class', 'opp-hit').attr('r', d => d.primary ? 26 : 20)
+    .style('fill', 'transparent').style('pointer-events', 'all');
+  enter.append('circle').attr('class', 'opp-pulse').attr('r', d => d.primary ? 20 : 15)
+    .style('pointer-events', 'none');
+  enter.append('text').attr('class', 'opp-glyph').text('✦').style('pointer-events', 'none');
+
+  enter
+    .on('mouseenter', (event, d) => showTooltip(event, `<div class="t-route">Opportunity</div>${d.label}`))
+    .on('mousemove', moveTooltip)
+    .on('mouseleave', hideTooltip);
+
+  const merged = enter.merge(sel);
+  merged.attr('transform', d => {
+    const p = d.anchor();
+    return `translate(${p.x},${p.y})`;
+  });
+}
+
+document.getElementById('opp-toggle').addEventListener('click', function () {
+  this.classList.toggle('on');
+  renderOpportunities();
+});
+
+/* ================================================================
+   VALUE-TYPE TOGGLES (isolate, not filter)
+   ================================================================ */
+const activeTypes = new Set(VALUE_TYPES.map(v => v.id));
+const toggleWrap = document.getElementById('value-toggles');
+
+VALUE_TYPES.forEach(vt => {
+  const btn = document.createElement('button');
+  btn.className = 'pill';
+  btn.dataset.type = vt.id;
+  btn.innerHTML = `<span class="swatch" style="background:var(--${vt.id})"></span>${vt.label}`;
+  btn.addEventListener('click', () => {
+    if (activeTypes.has(vt.id)) {
+      activeTypes.delete(vt.id);
+      btn.classList.add('off');
+    } else {
+      activeTypes.add(vt.id);
+      btn.classList.remove('off');
+    }
+    applyIsolation();
+  });
+  toggleWrap.appendChild(btn);
+});
+
+function applyIsolation() {
+  edgeGroups.classed('ghost', d => !activeTypes.has(d.type));
+}
+
+/* ================================================================
+   LEGEND
+   ================================================================ */
+const legendTypes = document.getElementById('legend-types');
+VALUE_TYPES.forEach(vt => {
+  const row = document.createElement('div');
+  row.className = 'legend-row';
+  row.innerHTML = `<span class="legend-swatch" style="background:var(--${vt.id})"></span>${vt.label}`;
+  legendTypes.appendChild(row);
+});
+
+/* ================================================================
+   TOOLTIP
+   ================================================================ */
+const tooltip = document.getElementById('tooltip');
+
+function showTooltip(event, html) {
+  tooltip.innerHTML = html;
+  tooltip.classList.add('visible');
+  moveTooltip(event);
+}
+function moveTooltip(event) {
+  tooltip.style.left = event.clientX + 'px';
+  tooltip.style.top = event.clientY + 'px';
+}
+function hideTooltip() {
+  tooltip.classList.remove('visible');
+}
+
+edgeGroups
+  .on('mouseenter', function (event, d) {
+    const connected = new Set([d._id]);
+    edgeGroups.classed('dim', e => e._id !== d._id);
+    edgeGroups.classed('highlight', e => e._id === d._id);
+    const swatch = `<span class="t-swatch" style="background:var(--${d.type})"></span>`;
+    const srcLabel = nodeById(d.source).label;
+    const tgtLabel = nodeById(d.target).label;
+    let html = `<div class="t-route">${srcLabel} → ${tgtLabel}</div>`;
+    html += `<div>${swatch}${d.type[0].toUpperCase() + d.type.slice(1)}</div>`;
+    if (d.note) html += `<div style="margin-top:6px;color:var(--text-dim);font-size:11px;">${d.note}</div>`;
+    html += `<div class="t-meta"><span>weight ${d.weight}</span><span>${d.status}</span></div>`;
+    showTooltip(event, html);
+  })
+  .on('mousemove', moveTooltip)
+  .on('mouseleave', function () {
+    edgeGroups.classed('dim', false).classed('highlight', false);
+    hideTooltip();
+  });
+
+/* ================================================================
+   INIT
+   ================================================================ */
+applyIsolation();
+renderOpportunities();
+</script>
+</body>
+</html>
