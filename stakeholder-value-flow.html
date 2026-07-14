@@ -635,7 +635,7 @@ VALUE_TYPES.map(v => v.id).concat(['opportunity']).forEach(type => {
 
 const STROKE_WIDTH = { 1: 2, 2: 6, 3: 12 };       // max (source-end) width of the taper
 const PARTICLE_DURATION = { 1: 11, 2: 8, 3: 5.5 };
-const TIP_GAP = { 1: 18, 2: 26, 3: 38 };          // clearance between tapered tip and target card
+const ARROW_LANDING_GAP = 5;                       // constant gap between true card boundary and arrowhead tip
 const TAPER_FRACTION = 0.14;                       // last 14% of path length narrows to a point
 const RIBBON_SEGMENTS = 28;                        // samples along a solid taper
 const DASH_SEGMENTS = 6;                           // samples per dash segment on a hypothesis taper
@@ -756,39 +756,99 @@ nodeGroups.each(function (d) {
 // minimum gap, so the clamp collapsed several edges back onto the same
 // point. Fix: treat the whole card outline as one continuous loop and let
 // edges spread across corners onto neighboring sides as needed.
-function perimeterLength(node) {
+const CARD_CORNER_R = 8; // must match the rx used on the drawn card <rect>
+
+// sharp-rectangle perimeter — used only as a stable sort-key domain for
+// angleToPerimeterPos below, then rescaled into the true rounded perimeter
+function cardSharpPerimeter(node) {
   return 2 * (node._cardW + node._cardH);
 }
 
+// true rounded-rect perimeter: 4 shortened straight runs + 4 quarter-arcs
+// (which together make one full circle of circumference 2*pi*r)
+function cardRoundedPerimeter(node) {
+  const r = Math.min(CARD_CORNER_R, node._cardW / 2, node._cardH / 2);
+  return 2 * (node._cardW - 2 * r) + 2 * (node._cardH - 2 * r) + 2 * Math.PI * r;
+}
+
+function perimeterLength(node) {
+  return cardRoundedPerimeter(node);
+}
+
 // natural (unresolved) position along the perimeter loop for a ray leaving
-// the node's center at angle theta — same side-detection math as before,
-// just expressed as a distance along the perimeter instead of a discrete
-// side + local offset
+// the node's center at angle theta. This only needs to be a stable, roughly
+// monotonic sort key for the anti-collision spacing pass below (it does not
+// need to be exact against the rounded shape) — computed against the sharp
+// rectangle for simplicity, then linearly rescaled into the true rounded
+// perimeter's coordinate domain so its numbers line up with
+// perimeterPosToPoint, which DOES need to be exact.
 function angleToPerimeterPos(node, theta) {
   const hw = node._cardW / 2, hh = node._cardH / 2;
   const dx = Math.cos(theta), dy = Math.sin(theta);
   const tx = dx !== 0 ? hw / Math.abs(dx) : Infinity;
   const ty = dy !== 0 ? hh / Math.abs(dy) : Infinity;
   const W = node._cardW, H = node._cardH;
+  let sharpPos;
   if (tx < ty) {
     const y = dy * tx;
-    return dx > 0 ? (W + (y + hh)) : (2 * W + H + (hh - y));
+    sharpPos = dx > 0 ? (W + (y + hh)) : (2 * W + H + (hh - y));
+  } else {
+    const x = dx * ty;
+    sharpPos = dy < 0 ? (x + hw) : (W + H + (hw - x));
   }
-  const x = dx * ty;
-  return dy < 0 ? (x + hw) : (W + H + (hw - x));
+  return sharpPos * (cardRoundedPerimeter(node) / cardSharpPerimeter(node));
 }
 
-// perimeter position -> actual (x,y) point + outward normal, walking
-// clockwise from the top-left corner: top -> right -> bottom -> left
+// perimeter position -> actual (x,y) point + outward normal, against the
+// TRUE rounded-rect boundary (4 straight segments + 4 quarter-circle corner
+// arcs), walking clockwise from the top-left corner: top -> right -> bottom
+// -> left. On a straight segment the normal is axis-aligned; on a corner arc
+// the normal points radially outward from that corner's arc center — using
+// the sharp-rectangle corner point there would be wrong, since the card's
+// drawn boundary doesn't pass through it.
 function perimeterPosToPoint(node, s) {
-  const hw = node._cardW / 2, hh = node._cardH / 2;
   const W = node._cardW, H = node._cardH;
-  const P = 2 * (W + H);
-  const ss = ((s % P) + P) % P;
-  if (ss < W) return { x: node.x - hw + ss, y: node.y - hh, nx: 0, ny: -1 };
-  if (ss < W + H) return { x: node.x + hw, y: node.y - hh + (ss - W), nx: 1, ny: 0 };
-  if (ss < 2 * W + H) return { x: node.x + hw - (ss - W - H), y: node.y + hh, nx: 0, ny: 1 };
-  return { x: node.x - hw, y: node.y + hh - (ss - 2 * W - H), nx: -1, ny: 0 };
+  const r = Math.min(CARD_CORNER_R, W / 2, H / 2);
+  const hw = W / 2, hh = H / 2;
+  const straightW = W - 2 * r, straightH = H - 2 * r;
+  const arcLen = (Math.PI / 2) * r;
+  const HALF_PI = Math.PI / 2;
+  const P = 2 * straightW + 2 * straightH + 4 * arcLen;
+  let ss = ((s % P) + P) % P;
+
+  if (ss < straightW) {
+    return { x: node.x + (-hw + r) + ss, y: node.y - hh, nx: 0, ny: -1 };
+  }
+  ss -= straightW;
+  if (ss < arcLen) {
+    const theta = -HALF_PI + (ss / arcLen) * HALF_PI;
+    return { x: node.x + (hw - r) + r * Math.cos(theta), y: node.y + (-hh + r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+  }
+  ss -= arcLen;
+  if (ss < straightH) {
+    return { x: node.x + hw, y: node.y + (-hh + r) + ss, nx: 1, ny: 0 };
+  }
+  ss -= straightH;
+  if (ss < arcLen) {
+    const theta = 0 + (ss / arcLen) * HALF_PI;
+    return { x: node.x + (hw - r) + r * Math.cos(theta), y: node.y + (hh - r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+  }
+  ss -= arcLen;
+  if (ss < straightW) {
+    return { x: node.x + (hw - r) - ss, y: node.y + hh, nx: 0, ny: 1 };
+  }
+  ss -= straightW;
+  if (ss < arcLen) {
+    const theta = HALF_PI + (ss / arcLen) * HALF_PI;
+    return { x: node.x + (-hw + r) + r * Math.cos(theta), y: node.y + (hh - r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+  }
+  ss -= arcLen;
+  if (ss < straightH) {
+    return { x: node.x - hw, y: node.y + (hh - r) - ss, nx: -1, ny: 0 };
+  }
+  ss -= straightH;
+  const theta = Math.PI + (ss / arcLen) * HALF_PI;
+  return { x: node.x + (-hw + r) + r * Math.cos(theta), y: node.y + (-hh + r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
 }
 
 const PERIMETER_GUTTER = 6; // constant clearance on top of each edge's own half-width
@@ -854,7 +914,7 @@ function cardAttachment(node, perimPos, extraGap) {
 function computeGeometry(e) {
   const s = nodeById(e.source), t = nodeById(e.target);
   const start = cardAttachment(s, e._perimAtSource || 0, 3);
-  const end = cardAttachment(t, e._perimAtTarget || 0, TIP_GAP[e.weight]);
+  const end = cardAttachment(t, e._perimAtTarget || 0, ARROW_LANDING_GAP);
 
   // bow perpendicular to the actual chord between the two attachment points
   const cdx = end.x - start.x, cdy = end.y - start.y;
@@ -866,10 +926,13 @@ function computeGeometry(e) {
   const mx = (start.x + end.x) / 2, my = (start.y + end.y) / 2;
   const cp = { x: mx + nx * bow * bowSign, y: my + ny * bow * bowSign };
 
-  // the ribbon body stops short of the true tip (pullback proportional to
-  // weight) so it doesn't poke through the marker sitting at e._geo.end
+  // the ribbon body stops just short of the true tip so it doesn't poke
+  // through the marker sitting at e._geo.end. Capped at the landing gap
+  // itself (rather than scaling freely with weight) so the ribbon still
+  // reaches all the way up to that small gap instead of stopping well short
+  // of it and leaving the (now much smaller) marker visually disconnected.
   const chord = cdist;
-  const pullback = STROKE_WIDTH[e.weight] * 2.6;
+  const pullback = Math.min(STROKE_WIDTH[e.weight] * 2.6, ARROW_LANDING_GAP * 0.8);
   const tCut = Math.max(0.5, 1 - pullback / chord);
 
   e._geo = { start, cp, end, tCut };
