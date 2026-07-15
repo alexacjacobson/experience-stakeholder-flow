@@ -6,7 +6,7 @@
 <title>BPM — Stakeholder Value-Flow</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   /* ============================================================
      COLOR — light theme. Every color is a variable so a single
@@ -30,9 +30,9 @@
 
     --shadow: drop-shadow(0 2px 4px rgba(0,0,0,0.18));
 
-    --font-head: 'Libre Baskerville', Georgia, serif;
-    --font-body: 'Plus Jakarta Sans', -apple-system, sans-serif;
-    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --font-head: 'Bricolage Grotesque', -apple-system, sans-serif;
+    --font-body: 'Inter', -apple-system, sans-serif;
+    --font-mono: 'DM Mono', ui-monospace, monospace;
   }
 
   * { box-sizing: border-box; }
@@ -158,16 +158,6 @@
     font-weight: 600;
   }
 
-  .node-group-label {
-    font-family: var(--font-body);
-    font-size: 8.5px;
-    font-weight: 600;
-    fill: var(--text-dim);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    pointer-events: none;
-  }
-
   .edge-line {
     filter: var(--shadow);
   }
@@ -220,19 +210,6 @@
   @keyframes travel {
     from { offset-distance: 0%; }
     to   { offset-distance: 100%; }
-  }
-
-  /* opportunity text callout — the one observation that isn't a flow */
-  .callout-leader {
-    stroke: var(--opportunity);
-    stroke-width: 1px;
-    fill: none;
-  }
-
-  .callout-text {
-    font-family: var(--font-body);
-    font-size: 11.5px;
-    fill: var(--text);
   }
 
   /* ============================================================
@@ -586,12 +563,6 @@ const OPPORTUNITY_EDGES = [
     note: 'Guilt is received, never returned. Nobody pushes back on optimization culture through their tracker.' },
 ].map((e, i) => Object.assign(e, { weight: 2, status: 'hypothesis', isOpportunity: true, _id: 'opp-edge-' + i }));
 
-// OPPORTUNITY TEXT CALLOUT — the one observation that's not a proposed flow and
-// can't be drawn as an arrow. Anchored near the competitors <-> society edges.
-const OPPORTUNITY_CALLOUT = {
-  label: "The guilt loop is co-produced. Culture shapes the product; the product reinforces the culture. The user is downstream of a loop they didn't start.",
-};
-
 /* ================================================================
    RENDER CODE — should not need edits when data above changes.
    ================================================================ */
@@ -599,9 +570,6 @@ const OPPORTUNITY_CALLOUT = {
 const svg = d3.select('#diagram');
 const nodeMap = new Map(NODES.map(n => [n.id, n]));
 function nodeById(id) { return nodeMap.get(id); }
-function findEdge(source, target, type) {
-  return EDGES.find(e => e.source === source && e.target === target && e.type === type);
-}
 
 const ALL_EDGES = EDGES.concat(OPPORTUNITY_EDGES);
 ALL_EDGES.forEach((e, i) => {
@@ -881,7 +849,7 @@ function widthAt(t, maxWidth) {
   const u = (t - taperStart) / TAPER_FRACTION;
   return Math.max(TAPER_MIN_WIDTH, maxWidth - (maxWidth - TAPER_MIN_WIDTH) * u);
 }
-function ribbonSegment(g, t0, t1, maxWidth, n) {
+function ribbonSegment(g, t0, t1, maxWidth, n, roundCaps) {
   const left = [], right = [];
   for (let i = 0; i <= n; i++) {
     const t = t0 + (t1 - t0) * (i / n);
@@ -891,28 +859,49 @@ function ribbonSegment(g, t0, t1, maxWidth, n) {
     left.push([p.x + nrm.x * hw, p.y + nrm.y * hw]);
     right.push([p.x - nrm.x * hw, p.y - nrm.y * hw]);
   }
-  let d = `M${left[0][0]},${left[0][1]} `;
-  for (let i = 1; i < left.length; i++) d += `L${left[i][0]},${left[i][1]} `;
-  for (let i = right.length - 1; i >= 0; i--) d += `L${right[i][0]},${right[i][1]} `;
+  if (!roundCaps) {
+    let d = `M${left[0][0]},${left[0][1]} `;
+    for (let i = 1; i < left.length; i++) d += `L${left[i][0]},${left[i][1]} `;
+    for (let i = right.length - 1; i >= 0; i--) d += `L${right[i][0]},${right[i][1]} `;
+    return d + 'Z ';
+  }
+  // rounded caps: swap the flat start/end edges for semicircular arcs sized
+  // to the local half-width, so each dash/dot reads as a rounded mark
+  // instead of a squared-off tick
+  const hw0 = widthAt(t0, maxWidth) / 2;
+  const hw1 = widthAt(t1, maxWidth) / 2;
+  const last = left.length - 1;
+  let d = `M${right[0][0]},${right[0][1]} `;
+  d += `A${hw0},${hw0} 0 0 0 ${left[0][0]},${left[0][1]} `;
+  for (let i = 1; i <= last; i++) d += `L${left[i][0]},${left[i][1]} `;
+  d += `A${hw1},${hw1} 0 0 0 ${right[last][0]},${right[last][1]} `;
+  for (let i = last - 1; i >= 0; i--) d += `L${right[i][0]},${right[i][1]} `;
   return d + 'Z ';
 }
 function taperedPath(e) {
   const g = e._geo;
   const maxWidth = STROKE_WIDTH[e.weight];
   if (e.status !== 'hypothesis') return ribbonSegment(g, 0, 1, maxWidth, RIBBON_SEGMENTS);
-  // dashed: dash/gap length scaled to THIS edge's own stroke width (as a
-  // fraction of its chord) so a thick dash reads as an elongated mark
-  // instead of blobbing into a dot, and a thin dash doesn't vanish
+  // dotted: dash length = 0.25x the LOCAL stroke width at each point
+  // (equivalent to stroke-dasharray: calc(w*0.25) calc(w*0.75)), recomputed
+  // every step from widthAt() so dot size shrinks through the taper along
+  // with the ribbon itself. The gap is authored as the same 0.75x, then
+  // inflated by +1x width: each dot's round cap bulges outward by ~half
+  // its own width at both ends (true for real stroke-linecap:round too),
+  // which eats straight into the raw gap — left uncompensated, 0.75x isn't
+  // enough clearance and adjacent dots visually merge into a solid line.
+  // Adding back the ~1x width the caps consume keeps the VISIBLE gap at
+  // the intended 0.75x proportion instead of the pre-cap one.
   const chord = Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y) || 1;
-  const dashOn = Math.min(0.16, Math.max(0.05, (maxWidth * 3.4) / chord));
-  const dashGap = Math.min(0.09, Math.max(0.035, (maxWidth * 1.8) / chord));
   let d = '', t = 0;
-  while (t < 1 - dashGap) {
+  while (t < 1) {
+    const localWidth = widthAt(t, maxWidth);
+    const dashOn = (localWidth * 0.25) / chord;
+    const dashGap = (localWidth * 1.75) / chord;
     const t1 = Math.min(1, t + dashOn);
-    d += ribbonSegment(g, t, t1, maxWidth, DASH_SEGMENTS);
+    d += ribbonSegment(g, t, t1, maxWidth, DASH_SEGMENTS, true);
     t = t1 + dashGap;
   }
-  if (t < 1) d += ribbonSegment(g, t, 1, maxWidth, DASH_SEGMENTS);
   return d;
 }
 
@@ -980,7 +969,6 @@ requestAnimationFrame(tickParticles);
 const edgeLayer = svg.append('g').attr('id', 'edge-layer');
 const oppEdgeLayer = svg.append('g').attr('id', 'opp-edge-layer');
 const nodeLayer = svg.append('g').attr('id', 'node-layer');
-const calloutLayer = svg.append('g').attr('id', 'callout-layer');
 
 // --- node cards ------------------------------------------------------------
 // UNCHANGED: built and measured first (before edge geometry) because
@@ -993,17 +981,10 @@ const nodeGroups = nodeLayer.selectAll('g.node-group')
   .attr('transform', d => `translate(${d.x},${d.y})`)
   .call(d3.drag().on('drag', dragged));
 
-const CARD_PAD_X = 23, CARD_PAD_Y = 17, CARD_BLOCK_GAP = 4, CARD_MIN_W = 102, CARD_MIN_H = 59;
+const CARD_PAD_X = 23, CARD_PAD_Y = 17, CARD_MIN_W = 102, CARD_MIN_H = 59;
 
 nodeGroups.each(function (d) {
   const g = d3.select(this);
-  const hasGroup = d.group !== 'core';
-
-  const groupText = g.append('text')
-    .attr('class', 'node-group-label')
-    .attr('text-anchor', 'middle')
-    .attr('dominant-baseline', 'hanging')
-    .text(hasGroup ? d.group : '');
 
   const titleText = g.append('text')
     .attr('class', 'node-title' + (d.group === 'core' ? ' core' : ''))
@@ -1023,11 +1004,9 @@ nodeGroups.each(function (d) {
     titleText.append('tspan').attr('x', 0).attr('dy', i === 0 ? 0 : '1.25em').text(l);
   });
 
-  const groupBBox = hasGroup ? groupText.node().getBBox() : { width: 0, height: 0 };
   const titleBBox = titleText.node().getBBox();
-  const gapBetween = hasGroup ? CARD_BLOCK_GAP : 0;
-  const contentWidth = Math.max(groupBBox.width, titleBBox.width);
-  const contentHeight = groupBBox.height + gapBetween + titleBBox.height;
+  const contentWidth = titleBBox.width;
+  const contentHeight = titleBBox.height;
 
   const cardW = Math.max(CARD_MIN_W, contentWidth + CARD_PAD_X * 2);
   const cardH = Math.max(CARD_MIN_H, contentHeight + CARD_PAD_Y * 2);
@@ -1042,12 +1021,7 @@ nodeGroups.each(function (d) {
     .attr('height', cardH)
     .attr('rx', 8);
 
-  let cursorY = -contentHeight / 2;
-  if (hasGroup) {
-    groupText.attr('y', cursorY);
-    cursorY += groupBBox.height + gapBetween;
-  }
-  titleText.attr('y', cursorY);
+  titleText.attr('y', -contentHeight / 2);
 });
 
 // resolve Step 2 for every node once, at load, using the fixed default layout
@@ -1161,7 +1135,6 @@ function dragged(event, d) {
   ALL_EDGES.forEach(e => {
     if (e.source === d.id || e.target === d.id) refreshEdgeGeometry(e);
   });
-  renderCallout();
 }
 
 /* ================================================================
@@ -1181,45 +1154,6 @@ function renderOpportunityEdges() {
     .attr('id', d => d._id);
   buildEdgeVisuals(enter);
   applyIsolation();
-}
-
-function wrapText(str, maxChars) {
-  const words = str.split(' ');
-  const lines = [];
-  let line = '';
-  words.forEach(w => {
-    const test = (line ? line + ' ' : '') + w;
-    if (test.length > maxChars && line) { lines.push(line); line = w; }
-    else line = test;
-  });
-  if (line) lines.push(line);
-  return lines;
-}
-
-function renderCallout() {
-  const active = document.getElementById('opp-toggle').classList.contains('on');
-  calloutLayer.selectAll('*').remove();
-  if (!active) return;
-
-  const e1 = findEdge('society', 'competitors', 'identity');
-  const e2 = findEdge('competitors', 'society', 'identity');
-  const m1 = edgeMidpoint(e1), m2 = edgeMidpoint(e2);
-  const anchor = { x: (m1.x + m2.x) / 2, y: (m1.y + m2.y) / 2 };
-  const textPos = { x: anchor.x + 40, y: anchor.y - 230 };
-
-  calloutLayer.append('line')
-    .attr('class', 'callout-leader')
-    .attr('x1', anchor.x).attr('y1', anchor.y)
-    .attr('x2', textPos.x).attr('y2', textPos.y + 12);
-
-  const lines = wrapText(OPPORTUNITY_CALLOUT.label, 32);
-  const textEl = calloutLayer.append('text')
-    .attr('class', 'callout-text')
-    .attr('x', textPos.x)
-    .attr('y', textPos.y);
-  lines.forEach((l, i) => {
-    textEl.append('tspan').attr('x', textPos.x).attr('dy', i === 0 ? 0 : '1.35em').text(l);
-  });
 }
 
 // ON: filled with the pill's own color, contrast text, no border.
@@ -1243,7 +1177,6 @@ document.getElementById('opp-toggle').addEventListener('click', function () {
   const isOn = this.classList.toggle('on');
   paintPill(this, 'opportunity', '#FFFFFF', isOn);
   renderOpportunityEdges();
-  renderCallout();
 });
 
 /* ================================================================
@@ -1326,7 +1259,6 @@ function nodeTooltipHtml(d) {
    ================================================================ */
 applyIsolation();
 renderOpportunityEdges();
-renderCallout();
 </script>
 </body>
 </html>
