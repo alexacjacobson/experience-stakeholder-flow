@@ -603,16 +603,326 @@ function findEdge(source, target, type) {
   return EDGES.find(e => e.source === source && e.target === target && e.type === type);
 }
 
-// --- arrowheads: native SVG <marker>, one per value type + one for
-// opportunity arrows. orient="auto-start-reverse" handles direction
-// automatically; markerUnits="strokeWidth" (the default, set explicitly
-// here) scales the whole marker by the carrier path's own stroke-width, so
-// weight-1 edges get a small chevron and weight-3 edges get a proportionally
-// larger one, with no per-edge geometry math required.
-//
-// Sizing: with a 10x10 viewBox and this chevron path, the arm length works
-// out to ~2.6x the carrier's stroke-width and the chevron's own stroke to
-// ~1x — a small, delicate accent rather than a heavy mark, per spec.
+const ALL_EDGES = EDGES.concat(OPPORTUNITY_EDGES);
+ALL_EDGES.forEach((e, i) => {
+  if (!e._id) e._id = 'edge-' + e.source + '-' + e.target + '-' + e.type + '-' + i;
+});
+
+/* ================================================================
+   EDGE SYSTEM
+   ================================================================
+   STEP 1  data prep: fixed lane index per edge, permanent, same at both ends
+   STEP 2  per-node attachment ordering: live function of current positions
+   STEP 3  path construction: centerline + lane offset + gentle bow + taper
+   STEP 4  arrowheads: native SVG <marker>
+   STEP 5  particles
+   STEP 6  line style (solid/dashed/opportunity)
+   STEP 7  live recomputation on drag, scoped to the dragged node
+   ================================================================ */
+
+const STROKE_WIDTH = { 1: 2, 2: 6, 3: 12 };        // max (source-end) width of the taper
+const PARTICLE_DURATION = { 1: 11, 2: 8, 3: 5.5 };
+const ARROW_LANDING_GAP = 5;                        // stop ~5px short of the true card boundary
+const START_GAP = 3;                                // small clearance at the source end too
+const TAPER_FRACTION = 0.14;                        // last 14% of path length tapers
+const TAPER_MIN_WIDTH = 2;                          // non-zero floor — the marker supplies the tip
+const RIBBON_SEGMENTS = 28;
+const DASH_SEGMENTS = 6;
+const GUTTER = 4;                                   // constant clearance on top of stroke-width-based gaps
+const BOW = 14;                                     // gentle constant arc height
+const LANE_UNIT = 9;                                // px per lane step, per edge of a same-pair bundle
+const CARD_CORNER_R = 8;                            // must match the rx used on the drawn card <rect>
+
+/* ---------------- STEP 1: lane assignment (fixed, permanent) ---------------- */
+// Sort every edge within its unordered-pair bundle by value type in a fixed
+// order, then by direction as a tiebreaker, and assign a fixed integer lane
+// centered on 0. This never changes after assignment, regardless of node
+// position or which end of the edge is being rendered.
+const LANE_TYPE_ORDER = ['financial', 'functional', 'emotional', 'identity', 'meaningful'];
+
+const pairGroups = new Map();
+ALL_EDGES.forEach(e => {
+  const key = [e.source, e.target].slice().sort().join('|');
+  if (!pairGroups.has(key)) pairGroups.set(key, []);
+  pairGroups.get(key).push(e);
+});
+pairGroups.forEach((group, key) => {
+  const [a] = key.split('|');
+  group.sort((x, y) => {
+    const typeDiff = LANE_TYPE_ORDER.indexOf(x.type) - LANE_TYPE_ORDER.indexOf(y.type);
+    if (typeDiff !== 0) return typeDiff;
+    const xForward = x.source === a ? 0 : 1; // A->B before B->A
+    const yForward = y.source === a ? 0 : 1;
+    return xForward - yForward;
+  });
+  const centerIdx = Math.floor((group.length - 1) / 2);
+  group.forEach((e, i) => { e._lane = i - centerIdx; });
+});
+
+/* ---------------- rounded-rect card boundary geometry ---------------- */
+// Pure geometry primitives: given a card's current width/height/center, map
+// an angle to a point on its TRUE rounded-rect boundary (4 straight runs +
+// 4 quarter-circle corner arcs), or vice versa. Independent of any specific
+// edge or lane — reused by Step 2 for every node, every recomputation.
+function cardSharpPerimeter(node) {
+  return 2 * (node._cardW + node._cardH);
+}
+function cardRoundedPerimeter(node) {
+  const r = Math.min(CARD_CORNER_R, node._cardW / 2, node._cardH / 2);
+  return 2 * (node._cardW - 2 * r) + 2 * (node._cardH - 2 * r) + 2 * Math.PI * r;
+}
+function perimeterLength(node) {
+  return cardRoundedPerimeter(node);
+}
+// angle -> position along the perimeter loop (stable monotonic sort key,
+// rescaled from a simple sharp-rectangle parameterization into the true
+// rounded perimeter's coordinate domain)
+function angleToPerimeterPos(node, theta) {
+  const hw = node._cardW / 2, hh = node._cardH / 2;
+  const dx = Math.cos(theta), dy = Math.sin(theta);
+  const tx = dx !== 0 ? hw / Math.abs(dx) : Infinity;
+  const ty = dy !== 0 ? hh / Math.abs(dy) : Infinity;
+  const W = node._cardW, H = node._cardH;
+  let sharpPos;
+  if (tx < ty) {
+    const y = dy * tx;
+    sharpPos = dx > 0 ? (W + (y + hh)) : (2 * W + H + (hh - y));
+  } else {
+    const x = dx * ty;
+    sharpPos = dy < 0 ? (x + hw) : (W + H + (hw - x));
+  }
+  return sharpPos * (cardRoundedPerimeter(node) / cardSharpPerimeter(node));
+}
+// perimeter position -> actual (x,y) + outward normal, walking clockwise
+// from the top-left corner: top -> right -> bottom -> left
+function perimeterPosToPoint(node, s) {
+  const W = node._cardW, H = node._cardH;
+  const r = Math.min(CARD_CORNER_R, W / 2, H / 2);
+  const hw = W / 2, hh = H / 2;
+  const straightW = W - 2 * r, straightH = H - 2 * r;
+  const arcLen = (Math.PI / 2) * r;
+  const HALF_PI = Math.PI / 2;
+  const P = 2 * straightW + 2 * straightH + 4 * arcLen;
+  let ss = ((s % P) + P) % P;
+
+  if (ss < straightW) return { x: node.x + (-hw + r) + ss, y: node.y - hh, nx: 0, ny: -1 };
+  ss -= straightW;
+  if (ss < arcLen) {
+    const theta = -HALF_PI + (ss / arcLen) * HALF_PI;
+    return { x: node.x + (hw - r) + r * Math.cos(theta), y: node.y + (-hh + r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+  }
+  ss -= arcLen;
+  if (ss < straightH) return { x: node.x + hw, y: node.y + (-hh + r) + ss, nx: 1, ny: 0 };
+  ss -= straightH;
+  if (ss < arcLen) {
+    const theta = (ss / arcLen) * HALF_PI;
+    return { x: node.x + (hw - r) + r * Math.cos(theta), y: node.y + (hh - r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+  }
+  ss -= arcLen;
+  if (ss < straightW) return { x: node.x + (hw - r) - ss, y: node.y + hh, nx: 0, ny: 1 };
+  ss -= straightW;
+  if (ss < arcLen) {
+    const theta = HALF_PI + (ss / arcLen) * HALF_PI;
+    return { x: node.x + (-hw + r) + r * Math.cos(theta), y: node.y + (hh - r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+  }
+  ss -= arcLen;
+  if (ss < straightH) return { x: node.x - hw, y: node.y + (hh - r) - ss, nx: -1, ny: 0 };
+  ss -= straightH;
+  const theta = Math.PI + (ss / arcLen) * HALF_PI;
+  return { x: node.x + (-hw + r) + r * Math.cos(theta), y: node.y + (-hh + r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
+}
+
+/* ---------------- STEP 2: per-node attachment ordering (live) ---------------- */
+// For an edge touching `atNodeId`, the far node's position nudged
+// perpendicular to the pair's canonical A->B direction by this edge's FIXED
+// lane. Using the same shift regardless of which end is being computed is
+// what keeps a bundle's lanes parallel: two edges sharing a destination get
+// distinctly different (but consistently, permanently offset) aim points,
+// so they naturally sort into adjacent — not swapped — attachment order at
+// BOTH ends.
+function edgeVirtualAim(e, atNodeId) {
+  const sortedPair = [e.source, e.target].slice().sort();
+  const nodeA = nodeById(sortedPair[0]), nodeB = nodeById(sortedPair[1]);
+  const theta = Math.atan2(nodeB.y - nodeA.y, nodeB.x - nodeA.x);
+  const perpX = -Math.sin(theta), perpY = Math.cos(theta);
+  const shift = e._lane * LANE_UNIT;
+  const farId = atNodeId === e.source ? e.target : e.source;
+  const far = nodeById(farId);
+  return { x: far.x + perpX * shift, y: far.y + perpY * shift };
+}
+
+// Pure function of CURRENT node positions: recomputes every edge touching
+// `nodeId`'s attachment point at THIS node only. Call once per node at
+// load, or for just the dragged node during a drag (Step 7).
+function resolveNodeAttachments(nodeId) {
+  const node = nodeById(nodeId);
+  const touching = ALL_EDGES.filter(e => e.source === nodeId || e.target === nodeId);
+  if (touching.length === 0) return;
+
+  const entries = touching.map(e => {
+    const isSource = e.source === nodeId;
+    const aim = edgeVirtualAim(e, nodeId);
+    const theta = Math.atan2(aim.y - node.y, aim.x - node.x);
+    return { edge: e, isSource, naturalPos: angleToPerimeterPos(node, theta), halfWidth: STROKE_WIDTH[e.weight] / 2 };
+  });
+
+  const P = perimeterLength(node);
+  let ordered, resolvedPositions;
+
+  if (entries.length === 1) {
+    ordered = entries;
+    resolvedPositions = [((entries[0].naturalPos % P) + P) % P];
+  } else {
+    entries.forEach(en => { en.pos = ((en.naturalPos % P) + P) % P; });
+    entries.sort((a, b) => a.pos - b.pos);
+    const n = entries.length;
+    // cut the loop at its largest existing gap, then enforce spacing
+    // linearly from there — lets an overcrowded side spill onto a
+    // neighboring one instead of clamping back onto itself
+    let maxGap = -1, cutIndex = 0;
+    for (let i = 0; i < n; i++) {
+      const cur = entries[i].pos;
+      const next = i === n - 1 ? entries[0].pos + P : entries[i + 1].pos;
+      const gap = next - cur;
+      if (gap > maxGap) { maxGap = gap; cutIndex = (i + 1) % n; }
+    }
+    ordered = entries.slice(cutIndex).concat(entries.slice(0, cutIndex));
+    const unrolled = [ordered[0].pos];
+    for (let i = 1; i < ordered.length; i++) {
+      let p = ordered[i].pos;
+      while (p < unrolled[i - 1]) p += P;
+      unrolled.push(p);
+    }
+    for (let i = 1; i < unrolled.length; i++) {
+      // minimum gap scales with BOTH edges' own thickness
+      const minGap = ordered[i - 1].halfWidth + ordered[i].halfWidth + GUTTER;
+      if (unrolled[i] - unrolled[i - 1] < minGap) unrolled[i] = unrolled[i - 1] + minGap;
+    }
+    // GUARD: never let the enforced spacing overflow one full lap — an
+    // overflowing span wraps past P and lands OUT OF ORDER relative to
+    // earlier entries, which reads as edges crossing near the node despite
+    // no two attachment points literally overlapping. Compress
+    // proportionally instead; a uniform scale of a monotonic sequence
+    // stays monotonic, so the angular order survives.
+    const span = unrolled[unrolled.length - 1] - unrolled[0];
+    const maxSpan = P * 0.96;
+    if (span > maxSpan) {
+      const shrink = maxSpan / span;
+      const base = unrolled[0];
+      for (let i = 0; i < unrolled.length; i++) unrolled[i] = base + (unrolled[i] - base) * shrink;
+    }
+    resolvedPositions = unrolled.map(p => ((p % P) + P) % P);
+  }
+
+  ordered.forEach((en, i) => {
+    const p = perimeterPosToPoint(node, resolvedPositions[i]);
+    const gap = en.isSource ? START_GAP : ARROW_LANDING_GAP;
+    const point = { x: p.x + p.nx * gap, y: p.y + p.ny * gap };
+    if (en.isSource) en.edge._attachAtSource = point;
+    else en.edge._attachAtTarget = point;
+  });
+}
+
+/* ---------------- STEP 3: path construction (live) ---------------- */
+function computeGeometry(e) {
+  const start = e._attachAtSource, end = e._attachAtTarget;
+
+  // bow direction is the PAIR's canonical perpendicular (not each edge's
+  // own chord normal), so every lane in a bundle bows the same way by the
+  // same amount — a uniform shift of already-parallel lanes stays parallel
+  const sortedPair = [e.source, e.target].slice().sort();
+  const nodeA = nodeById(sortedPair[0]), nodeB = nodeById(sortedPair[1]);
+  const pairTheta = Math.atan2(nodeB.y - nodeA.y, nodeB.x - nodeA.x);
+  const perpX = -Math.sin(pairTheta), perpY = Math.cos(pairTheta);
+
+  const cdx = end.x - start.x, cdy = end.y - start.y;
+  const cdist = Math.hypot(cdx, cdy) || 1;
+  const bow = Math.min(BOW, cdist * 0.25);
+  const mx = (start.x + end.x) / 2, my = (start.y + end.y) / 2;
+  const cp = { x: mx + perpX * bow, y: my + perpY * bow };
+
+  e._geo = { start, cp, end };
+  return e._geo;
+}
+
+function pathD(geo) {
+  return `M${geo.start.x},${geo.start.y} Q${geo.cp.x},${geo.cp.y} ${geo.end.x},${geo.end.y}`;
+}
+
+function edgeMidpoint(e) {
+  const g = e._geo || computeGeometry(e);
+  const t = 0.5;
+  const x = (1 - t) * (1 - t) * g.start.x + 2 * (1 - t) * t * g.cp.x + t * t * g.end.x;
+  const y = (1 - t) * (1 - t) * g.start.y + 2 * (1 - t) * t * g.cp.y + t * t * g.end.y;
+  return { x, y };
+}
+
+// tapered ribbon: a single filled shape, full weight-based width near the
+// source, narrowing to a small non-zero floor near the target — the marker
+// (Step 4) supplies the visible point, so the ribbon never needs to reach
+// true zero itself
+function bezierPoint(g, t) {
+  const mt = 1 - t;
+  return {
+    x: mt * mt * g.start.x + 2 * mt * t * g.cp.x + t * t * g.end.x,
+    y: mt * mt * g.start.y + 2 * mt * t * g.cp.y + t * t * g.end.y,
+  };
+}
+function bezierNormal(g, t) {
+  const mt = 1 - t;
+  const dx = 2 * mt * (g.cp.x - g.start.x) + 2 * t * (g.end.x - g.cp.x);
+  const dy = 2 * mt * (g.cp.y - g.start.y) + 2 * t * (g.end.y - g.cp.y);
+  const len = Math.hypot(dx, dy) || 1;
+  return { x: -dy / len, y: dx / len };
+}
+function widthAt(t, maxWidth) {
+  const taperStart = 1 - TAPER_FRACTION;
+  if (t <= taperStart) return maxWidth;
+  const u = (t - taperStart) / TAPER_FRACTION;
+  return Math.max(TAPER_MIN_WIDTH, maxWidth - (maxWidth - TAPER_MIN_WIDTH) * u);
+}
+function ribbonSegment(g, t0, t1, maxWidth, n) {
+  const left = [], right = [];
+  for (let i = 0; i <= n; i++) {
+    const t = t0 + (t1 - t0) * (i / n);
+    const p = bezierPoint(g, t);
+    const nrm = bezierNormal(g, t);
+    const hw = widthAt(t, maxWidth) / 2;
+    left.push([p.x + nrm.x * hw, p.y + nrm.y * hw]);
+    right.push([p.x - nrm.x * hw, p.y - nrm.y * hw]);
+  }
+  let d = `M${left[0][0]},${left[0][1]} `;
+  for (let i = 1; i < left.length; i++) d += `L${left[i][0]},${left[i][1]} `;
+  for (let i = right.length - 1; i >= 0; i--) d += `L${right[i][0]},${right[i][1]} `;
+  return d + 'Z ';
+}
+function taperedPath(e) {
+  const g = e._geo;
+  const maxWidth = STROKE_WIDTH[e.weight];
+  if (e.status !== 'hypothesis') return ribbonSegment(g, 0, 1, maxWidth, RIBBON_SEGMENTS);
+  // dashed: dash/gap length scaled to THIS edge's own stroke width (as a
+  // fraction of its chord) so a thick dash reads as an elongated mark
+  // instead of blobbing into a dot, and a thin dash doesn't vanish
+  const chord = Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y) || 1;
+  const dashOn = Math.min(0.16, Math.max(0.05, (maxWidth * 3.4) / chord));
+  const dashGap = Math.min(0.09, Math.max(0.035, (maxWidth * 1.8) / chord));
+  let d = '', t = 0;
+  while (t < 1 - dashGap) {
+    const t1 = Math.min(1, t + dashOn);
+    d += ribbonSegment(g, t, t1, maxWidth, DASH_SEGMENTS);
+    t = t1 + dashGap;
+  }
+  if (t < 1) d += ribbonSegment(g, t, 1, maxWidth, DASH_SEGMENTS);
+  return d;
+}
+
+/* ---------------- STEP 4: arrowheads — native SVG <marker> ---------------- */
+// orient="auto-start-reverse" reads the carrier path's own tangent at its
+// final vertex, so orientation always matches the curve's actual approach
+// direction with no hand-computed angle math. markerUnits="strokeWidth"
+// scales the whole marker (geometry AND its internal stroke-width) by the
+// carrier's stroke-width, so a weight-1 edge gets a small, thin chevron and
+// a weight-3 edge gets a proportionally larger — but still delicate — one.
 const markerDefs = svg.append('defs');
 VALUE_TYPES.map(v => v.id).concat(['opportunity']).forEach(type => {
   markerDefs.append('marker')
@@ -620,70 +930,50 @@ VALUE_TYPES.map(v => v.id).concat(['opportunity']).forEach(type => {
     .attr('viewBox', '0 0 10 10')
     .attr('refX', 9)
     .attr('refY', 5)
-    .attr('markerWidth', 2.8)
-    .attr('markerHeight', 2.8)
+    .attr('markerWidth', 4)
+    .attr('markerHeight', 4)
     .attr('markerUnits', 'strokeWidth')
     .attr('orient', 'auto-start-reverse')
     .append('path')
-    .attr('d', 'M 4 3 L 8 5 L 4 7')
+    .attr('d', 'M 1.5 1.5 L 8 5 L 1.5 8.5')
     .attr('fill', 'none')
     .attr('stroke', `var(--${type})`)
-    .attr('stroke-width', 1.3)
+    .attr('stroke-width', 1.2)
     .attr('stroke-linecap', 'round')
     .attr('stroke-linejoin', 'round');
 });
 
-const STROKE_WIDTH = { 1: 2, 2: 6, 3: 12 };       // max (source-end) width of the taper
-const PARTICLE_DURATION = { 1: 11, 2: 8, 3: 5.5 };
-const ARROW_LANDING_GAP = 5;                       // constant gap between true card boundary and arrowhead tip
-const TAPER_FRACTION = 0.14;                       // last 14% of path length narrows to a point
-const RIBBON_SEGMENTS = 28;                        // samples along a solid taper
-const DASH_SEGMENTS = 6;                           // samples per dash segment on a hypothesis taper
-const GUTTER = 4;
-const BOW = 18; // gentle constant arc height, independent of bundle size
-const ALL_EDGES = EDGES.concat(OPPORTUNITY_EDGES);
-
-ALL_EDGES.forEach((e, i) => {
-  if (!e._id) e._id = 'edge-' + e.source + '-' + e.target + '-' + e.type + '-' + i;
-});
-
-// Parallel-offset bundling: edges sharing an unordered node pair are fanned
-// out side by side instead of stacking on top of each other. A->B edges go
-// to one side, B->A to the other, so reciprocity is legible at a glance.
-// Opportunity edges participate too (statically, even while unmounted) so
-// data-edge lanes never shift when the overlay toggles.
-const pairGroups = new Map();
-ALL_EDGES.forEach(e => {
-  const key = [e.source, e.target].slice().sort().join('|');
-  if (!pairGroups.has(key)) pairGroups.set(key, []);
-  pairGroups.get(key).push(e);
-});
-// Two bundles stay visually merged even with correct landing points, because
-// they're the densest node pairs on the map — widen their lane spacing only.
-const WIDE_SPACING_PAIRS = new Set(['competitors|user', 'bpm|user']);
-const WIDE_SPACING_MULTIPLIER = 1.75;
-
-pairGroups.forEach((group, key) => {
-  const spacingMultiplier = WIDE_SPACING_PAIRS.has(key) ? WIDE_SPACING_MULTIPLIER : 1;
-  const [a] = key.split('|');
-  const forward = group.filter(e => e.source === a);
-  const backward = group.filter(e => e.source !== a);
-  // This assigns each edge ONE fixed lane rank (e._offset), stable and used
-  // identically at both ends later — direction determines which side of the
-  // centerline (forward positive, backward negative), thickness-then-type
-  // order determines position within that side. Nothing downstream is
-  // allowed to re-order edges within the same pair independently at each
-  // end, which is what previously let same-pair bundles twist.
-  [[forward, 1], [backward, -1]].forEach(([sub, sign]) => {
-    sub.sort((x, y) => STROKE_WIDTH[y.weight] - STROKE_WIDTH[x.weight] || x.type.localeCompare(y.type));
-    let cumulative = (GUTTER * spacingMultiplier) / 2;
-    sub.forEach(e => {
-      const w = STROKE_WIDTH[e.weight] * spacingMultiplier;
-      e._offset = sign * (cumulative + w / 2);
-      cumulative += w + GUTTER * spacingMultiplier;
-    });
+/* ---------------- STEP 5: particles ---------------- */
+// Position travels via CSS offset-path/offset-distance. Radius is driven by
+// a single rAF loop so each particle stays sized to the LOCAL taper width
+// under it (~1.3x), recomputed every frame.
+const activeParticles = [];
+function spawnParticles(parent, e) {
+  const n = e.weight;
+  const dur = PARTICLE_DURATION[e.weight];
+  const maxWidth = STROKE_WIDTH[e.weight];
+  const color = e.isOpportunity ? 'var(--opportunity)' : `var(--${e.type})`;
+  for (let i = 0; i < n; i++) {
+    const el = parent.append('circle')
+      .attr('class', 'particle')
+      .style('fill', color)
+      .style('offset-path', `path('${pathD(e._geo)}')`)
+      .style('animation-duration', dur + 's')
+      .style('animation-delay', (-(i / n) * dur) + 's')
+      .node();
+    activeParticles.push({ el, maxWidth, duration: dur, phase: i / n, isOpportunity: !!e.isOpportunity });
+  }
+}
+function tickParticles(ts) {
+  const seconds = ts / 1000;
+  activeParticles.forEach(p => {
+    const t = (((seconds / p.duration) + p.phase) % 1 + 1) % 1;
+    const w = widthAt(t, p.maxWidth);
+    p.el.setAttribute('r', Math.max(0.5, (w * 1.3) / 2));
   });
-});
+  requestAnimationFrame(tickParticles);
+}
+requestAnimationFrame(tickParticles);
 
 // layers, created up front so z-order is fixed regardless of when we later
 // populate each with children (opportunity edges above data edges; nodes on top)
@@ -692,9 +982,9 @@ const oppEdgeLayer = svg.append('g').attr('id', 'opp-edge-layer');
 const nodeLayer = svg.append('g').attr('id', 'node-layer');
 const calloutLayer = svg.append('g').attr('id', 'callout-layer');
 
-// --- node cards ----------------------------------------------------------
-// Built and measured FIRST (before edge geometry) because edge attachment
-// needs each card's real width/height, not a guessed radius.
+// --- node cards ------------------------------------------------------------
+// UNCHANGED: built and measured first (before edge geometry) because
+// attachment resolution needs each card's real width/height.
 const nodeGroups = nodeLayer.selectAll('g.node-group')
   .data(NODES)
   .join('g')
@@ -760,383 +1050,8 @@ nodeGroups.each(function (d) {
   titleText.attr('y', cursorY);
 });
 
-// --- edge attachment: full card PERIMETER, not per-side buckets ----------
-// A prior per-side-bucket approach clustered edges again anyway: it clamped
-// each edge's position to fit within the ONE side it was assigned to, and a
-// busy card's single side is often too short to fit all its edges at a
-// minimum gap, so the clamp collapsed several edges back onto the same
-// point. Fix: treat the whole card outline as one continuous loop and let
-// edges spread across corners onto neighboring sides as needed.
-const CARD_CORNER_R = 8; // must match the rx used on the drawn card <rect>
-
-// sharp-rectangle perimeter — used only as a stable sort-key domain for
-// angleToPerimeterPos below, then rescaled into the true rounded perimeter
-function cardSharpPerimeter(node) {
-  return 2 * (node._cardW + node._cardH);
-}
-
-// true rounded-rect perimeter: 4 shortened straight runs + 4 quarter-arcs
-// (which together make one full circle of circumference 2*pi*r)
-function cardRoundedPerimeter(node) {
-  const r = Math.min(CARD_CORNER_R, node._cardW / 2, node._cardH / 2);
-  return 2 * (node._cardW - 2 * r) + 2 * (node._cardH - 2 * r) + 2 * Math.PI * r;
-}
-
-function perimeterLength(node) {
-  return cardRoundedPerimeter(node);
-}
-
-// natural (unresolved) position along the perimeter loop for a ray leaving
-// the node's center at angle theta. This only needs to be a stable, roughly
-// monotonic sort key for the anti-collision spacing pass below (it does not
-// need to be exact against the rounded shape) — computed against the sharp
-// rectangle for simplicity, then linearly rescaled into the true rounded
-// perimeter's coordinate domain so its numbers line up with
-// perimeterPosToPoint, which DOES need to be exact.
-function angleToPerimeterPos(node, theta) {
-  const hw = node._cardW / 2, hh = node._cardH / 2;
-  const dx = Math.cos(theta), dy = Math.sin(theta);
-  const tx = dx !== 0 ? hw / Math.abs(dx) : Infinity;
-  const ty = dy !== 0 ? hh / Math.abs(dy) : Infinity;
-  const W = node._cardW, H = node._cardH;
-  let sharpPos;
-  if (tx < ty) {
-    const y = dy * tx;
-    sharpPos = dx > 0 ? (W + (y + hh)) : (2 * W + H + (hh - y));
-  } else {
-    const x = dx * ty;
-    sharpPos = dy < 0 ? (x + hw) : (W + H + (hw - x));
-  }
-  return sharpPos * (cardRoundedPerimeter(node) / cardSharpPerimeter(node));
-}
-
-// perimeter position -> actual (x,y) point + outward normal, against the
-// TRUE rounded-rect boundary (4 straight segments + 4 quarter-circle corner
-// arcs), walking clockwise from the top-left corner: top -> right -> bottom
-// -> left. On a straight segment the normal is axis-aligned; on a corner arc
-// the normal points radially outward from that corner's arc center — using
-// the sharp-rectangle corner point there would be wrong, since the card's
-// drawn boundary doesn't pass through it.
-function perimeterPosToPoint(node, s) {
-  const W = node._cardW, H = node._cardH;
-  const r = Math.min(CARD_CORNER_R, W / 2, H / 2);
-  const hw = W / 2, hh = H / 2;
-  const straightW = W - 2 * r, straightH = H - 2 * r;
-  const arcLen = (Math.PI / 2) * r;
-  const HALF_PI = Math.PI / 2;
-  const P = 2 * straightW + 2 * straightH + 4 * arcLen;
-  let ss = ((s % P) + P) % P;
-
-  if (ss < straightW) {
-    return { x: node.x + (-hw + r) + ss, y: node.y - hh, nx: 0, ny: -1 };
-  }
-  ss -= straightW;
-  if (ss < arcLen) {
-    const theta = -HALF_PI + (ss / arcLen) * HALF_PI;
-    return { x: node.x + (hw - r) + r * Math.cos(theta), y: node.y + (-hh + r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
-  }
-  ss -= arcLen;
-  if (ss < straightH) {
-    return { x: node.x + hw, y: node.y + (-hh + r) + ss, nx: 1, ny: 0 };
-  }
-  ss -= straightH;
-  if (ss < arcLen) {
-    const theta = 0 + (ss / arcLen) * HALF_PI;
-    return { x: node.x + (hw - r) + r * Math.cos(theta), y: node.y + (hh - r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
-  }
-  ss -= arcLen;
-  if (ss < straightW) {
-    return { x: node.x + (hw - r) - ss, y: node.y + hh, nx: 0, ny: 1 };
-  }
-  ss -= straightW;
-  if (ss < arcLen) {
-    const theta = HALF_PI + (ss / arcLen) * HALF_PI;
-    return { x: node.x + (-hw + r) + r * Math.cos(theta), y: node.y + (hh - r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
-  }
-  ss -= arcLen;
-  if (ss < straightH) {
-    return { x: node.x - hw, y: node.y + (hh - r) - ss, nx: -1, ny: 0 };
-  }
-  ss -= straightH;
-  const theta = Math.PI + (ss / arcLen) * HALF_PI;
-  return { x: node.x + (-hw + r) + r * Math.cos(theta), y: node.y + (-hh + r) + r * Math.sin(theta), nx: Math.cos(theta), ny: Math.sin(theta) };
-}
-
-const PERIMETER_GUTTER = 6; // constant clearance on top of each cluster's own half-width
-
-// --- attachment placement, two passes ------------------------------------
-// Pass 1 (inter-destination): group edges at each node by which OTHER node
-// they connect to — one cluster per destination, not one entry per edge —
-// and space CLUSTERS apart around the perimeter using the same destination-
-// angle + anti-collision approach as before. This is what keeps a busy hub
-// legible: edges to Competitor apps, Funders, BPM, etc. each get their own
-// clear region of the card boundary.
-//
-// Pass 2 (intra-bundle): within a cluster (multiple edges to/from the SAME
-// other node), each edge already has a fixed, stable lane rank (e._offset,
-// assigned once above — same value regardless of which end is being
-// computed). That rank is applied as a small perimeter-position nudge off
-// the cluster's shared base point, using a probe to determine — separately
-// and correctly at EACH node — which local direction along that node's
-// boundary corresponds to the SAME fixed global side the rank refers to.
-// This is what keeps parallel edges in one lane start to finish instead of
-// swapping order between the two ends (a twisted-ribbon crossing).
-
-function resolveClusters(node, clusters) {
-  const entries = Array.from(clusters.values());
-  const P = perimeterLength(node);
-  if (entries.length <= 1) {
-    entries.forEach(c => { c.resolvedPos = ((c.naturalPos % P) + P) % P; });
-    return;
-  }
-  entries.forEach(c => { c.pos = ((c.naturalPos % P) + P) % P; });
-  entries.sort((a, b) => a.pos - b.pos);
-  const n = entries.length;
-  // cut the loop at its largest existing gap, then enforce spacing linearly
-  // from there — this is what lets an overcrowded side spill onto a
-  // neighboring one instead of being clamped back onto itself
-  let maxGap = -1, cutIndex = 0;
-  for (let i = 0; i < n; i++) {
-    const cur = entries[i].pos;
-    const next = i === n - 1 ? entries[0].pos + P : entries[i + 1].pos;
-    const gap = next - cur;
-    if (gap > maxGap) { maxGap = gap; cutIndex = (i + 1) % n; }
-  }
-  const ordered = entries.slice(cutIndex).concat(entries.slice(0, cutIndex));
-  const unrolled = [ordered[0].pos];
-  for (let i = 1; i < ordered.length; i++) {
-    let p = ordered[i].pos;
-    while (p < unrolled[i - 1]) p += P;
-    unrolled.push(p);
-  }
-  for (let i = 1; i < unrolled.length; i++) {
-    const minGap = ordered[i - 1].halfWidth + ordered[i].halfWidth + PERIMETER_GUTTER;
-    if (unrolled[i] - unrolled[i - 1] < minGap) unrolled[i] = unrolled[i - 1] + minGap;
-  }
-  // Guard against wraparound corruption: forward-pushing to satisfy minimum
-  // gaps can, on a busy node, push the total span past one full lap of the
-  // perimeter (P). Since the final position is taken mod P, an overflowing
-  // span wraps around and lands OUT OF ORDER relative to entries earlier in
-  // the sequence. If that happens, compress the whole sequence
-  // proportionally so it fits within the perimeter — a uniform scale of a
-  // monotonic sequence stays monotonic, so destination-angle order survives.
-  const span = unrolled[unrolled.length - 1] - unrolled[0];
-  const maxSpan = P * 0.96; // small seam so the first and last entries don't touch
-  if (span > maxSpan) {
-    const shrink = maxSpan / span;
-    const base = unrolled[0];
-    for (let i = 0; i < unrolled.length; i++) unrolled[i] = base + (unrolled[i] - base) * shrink;
-  }
-  ordered.forEach((c, i) => { c.resolvedPos = ((unrolled[i] % P) + P) % P; });
-}
-
-// nodeId -> Map(otherNodeId -> { naturalPos, halfWidth, edges: [{edge,isSource}] })
-const nodeClusters = new Map();
-function addToCluster(nodeId, otherId, naturalPos, edge, isSource) {
-  if (!nodeClusters.has(nodeId)) nodeClusters.set(nodeId, new Map());
-  const clusters = nodeClusters.get(nodeId);
-  if (!clusters.has(otherId)) clusters.set(otherId, { naturalPos, edges: [] });
-  clusters.get(otherId).edges.push({ edge, isSource });
-}
-ALL_EDGES.forEach(e => {
-  const s = nodeById(e.source), t = nodeById(e.target);
-  const theta = Math.atan2(t.y - s.y, t.x - s.x);
-  addToCluster(e.source, e.target, angleToPerimeterPos(s, theta), e, true);
-  addToCluster(e.target, e.source, angleToPerimeterPos(t, theta + Math.PI), e, false);
-});
-
-// each cluster reserves room for its furthest-out lane, not just a flat sum,
-// so pass 1's inter-destination spacing leaves enough space for pass 2's
-// fanned-out lanes to actually fit without spilling into a neighboring cluster
-nodeClusters.forEach(clusters => {
-  clusters.forEach(cluster => {
-    let maxExtent = 0;
-    cluster.edges.forEach(en => {
-      const extent = Math.abs(en.edge._offset) + STROKE_WIDTH[en.edge.weight] / 2;
-      if (extent > maxExtent) maxExtent = extent;
-    });
-    cluster.halfWidth = maxExtent;
-  });
-});
-nodeClusters.forEach((clusters, nodeId) => resolveClusters(nodeById(nodeId), clusters));
-
-// probe which local perimeter direction (+ or -) at this exact point
-// corresponds to the given global direction (pairNx,pairNy) — needed because
-// "forward along the perimeter" flips handedness between a node and its
-// partner (they face each other), so a fixed global lane sign must be
-// re-resolved into the correct LOCAL sign independently at each node
-function localSignForGlobalDir(node, basePos, pairNx, pairNy) {
-  const p0 = perimeterPosToPoint(node, basePos);
-  const p1 = perimeterPosToPoint(node, basePos + 1.5);
-  const tx = p1.x - p0.x, ty = p1.y - p0.y;
-  const tlen = Math.hypot(tx, ty) || 1;
-  const dot = (tx / tlen) * pairNx + (ty / tlen) * pairNy;
-  return dot >= 0 ? 1 : -1;
-}
-
-ALL_EDGES.forEach(e => {
-  const sortedPair = [e.source, e.target].slice().sort();
-  const nodeA = nodeById(sortedPair[0]), nodeB = nodeById(sortedPair[1]);
-  // canonical A->B direction, identical for every edge sharing this pair
-  // regardless of that particular edge's own source/target order
-  const pairTheta = Math.atan2(nodeB.y - nodeA.y, nodeB.x - nodeA.x);
-  const pairNx = -Math.sin(pairTheta), pairNy = Math.cos(pairTheta);
-
-  const sourceCluster = nodeClusters.get(e.source).get(e.target);
-  const targetCluster = nodeClusters.get(e.target).get(e.source);
-
-  const signAtSource = localSignForGlobalDir(nodeById(e.source), sourceCluster.resolvedPos, pairNx, pairNy);
-  const signAtTarget = localSignForGlobalDir(nodeById(e.target), targetCluster.resolvedPos, pairNx, pairNy);
-
-  e._perimAtSource = sourceCluster.resolvedPos + signAtSource * e._offset;
-  e._perimAtTarget = targetCluster.resolvedPos + signAtTarget * e._offset;
-});
-
-function cardAttachment(node, perimPos, extraGap) {
-  const p = perimeterPosToPoint(node, perimPos);
-  // curved paths begin their arc just outside the card boundary, not at it
-  return { x: p.x + p.nx * extraGap, y: p.y + p.ny * extraGap };
-}
-
-function computeGeometry(e) {
-  const s = nodeById(e.source), t = nodeById(e.target);
-  const start = cardAttachment(s, e._perimAtSource || 0, 3);
-  const end = cardAttachment(t, e._perimAtTarget || 0, ARROW_LANDING_GAP);
-
-  // bow perpendicular to the actual chord between the two attachment points
-  const cdx = end.x - start.x, cdy = end.y - start.y;
-  const cdist = Math.hypot(cdx, cdy) || 1;
-  const nx = -cdy / cdist, ny = cdx / cdist;
-  const offset = e._offset || 0;
-  const bowSign = offset >= 0 ? 1 : -1;
-  const bow = Math.min(BOW, cdist * 0.3);
-  const mx = (start.x + end.x) / 2, my = (start.y + end.y) / 2;
-  const cp = { x: mx + nx * bow * bowSign, y: my + ny * bow * bowSign };
-
-  // the ribbon body stops just short of the true tip so it doesn't poke
-  // through the marker sitting at e._geo.end. Capped at the landing gap
-  // itself (rather than scaling freely with weight) so the ribbon still
-  // reaches all the way up to that small gap instead of stopping well short
-  // of it and leaving the (now much smaller) marker visually disconnected.
-  const chord = cdist;
-  const pullback = Math.min(STROKE_WIDTH[e.weight] * 2.6, ARROW_LANDING_GAP * 0.8);
-  const tCut = Math.max(0.5, 1 - pullback / chord);
-
-  e._geo = { start, cp, end, tCut };
-  return e._geo;
-}
-
-function pathD(geo) {
-  return `M${geo.start.x},${geo.start.y} Q${geo.cp.x},${geo.cp.y} ${geo.end.x},${geo.end.y}`;
-}
-
-function edgeMidpoint(e) {
-  const g = e._geo || computeGeometry(e);
-  const t = 0.5;
-  const x = (1 - t) * (1 - t) * g.start.x + 2 * (1 - t) * t * g.cp.x + t * t * g.end.x;
-  const y = (1 - t) * (1 - t) * g.start.y + 2 * (1 - t) * t * g.cp.y + t * t * g.end.y;
-  return { x, y };
-}
-
-// --- tapered ribbon geometry -------------------------------------------
-// Edges are drawn as a single filled shape that tapers from full stroke
-// width at the source down to a true point at the target, rather than a
-// stroked line plus a marker glyph. The taper IS the arrowhead.
-
-function bezierPoint(g, t) {
-  const mt = 1 - t;
-  return {
-    x: mt * mt * g.start.x + 2 * mt * t * g.cp.x + t * t * g.end.x,
-    y: mt * mt * g.start.y + 2 * mt * t * g.cp.y + t * t * g.end.y,
-  };
-}
-function bezierNormal(g, t) {
-  const mt = 1 - t;
-  const dx = 2 * mt * (g.cp.x - g.start.x) + 2 * t * (g.end.x - g.cp.x);
-  const dy = 2 * mt * (g.cp.y - g.start.y) + 2 * t * (g.end.y - g.cp.y);
-  const len = Math.hypot(dx, dy) || 1;
-  return { x: -dy / len, y: dx / len };
-}
-function widthAt(t, maxWidth) {
-  const taperStart = 1 - TAPER_FRACTION;
-  if (t <= taperStart) return maxWidth;
-  const u = (t - taperStart) / TAPER_FRACTION;
-  return maxWidth * (1 - u); // true point: width -> 0 at t=1
-}
-function ribbonSegment(g, t0, t1, maxWidth, n) {
-  const left = [], right = [];
-  for (let i = 0; i <= n; i++) {
-    const t = t0 + (t1 - t0) * (i / n);
-    const p = bezierPoint(g, t);
-    const nrm = bezierNormal(g, t);
-    const hw = widthAt(t, maxWidth) / 2;
-    left.push([p.x + nrm.x * hw, p.y + nrm.y * hw]);
-    right.push([p.x - nrm.x * hw, p.y - nrm.y * hw]);
-  }
-  let d = `M${left[0][0]},${left[0][1]} `;
-  for (let i = 1; i < left.length; i++) d += `L${left[i][0]},${left[i][1]} `;
-  for (let i = right.length - 1; i >= 0; i--) d += `L${right[i][0]},${right[i][1]} `;
-  return d + 'Z ';
-}
-function taperedPath(e) {
-  const g = e._geo;
-  const maxWidth = STROKE_WIDTH[e.weight];
-  // the ribbon stops short of the true tip at tCut — the SVG <marker> on
-  // the invisible .edge-marker carrier path covers the remaining distance,
-  // so the ribbon no longer needs to resolve to a point itself
-  const tCut = g.tCut != null ? g.tCut : 1;
-  if (e.status !== 'hypothesis') return ribbonSegment(g, 0, tCut, maxWidth, RIBBON_SEGMENTS);
-  // dashed: dash/gap length is scaled to THIS edge's own stroke width (as a
-  // fraction of its chord) so a thick dash still reads as an elongated mark
-  // instead of blobbing into a dot, and a thin dash doesn't vanish to a speck
-  const chord = Math.hypot(g.end.x - g.start.x, g.end.y - g.start.y) || 1;
-  const dashOn = Math.min(0.16, Math.max(0.05, (maxWidth * 3.4) / chord));
-  const dashGap = Math.min(0.09, Math.max(0.035, (maxWidth * 1.8) / chord));
-  // several independent tapered segments; the FINAL dash always reaches tCut
-  let d = '', t = 0;
-  while (t < tCut - dashGap) {
-    const t1 = Math.min(tCut, t + dashOn);
-    d += ribbonSegment(g, t, t1, maxWidth, DASH_SEGMENTS);
-    t = t1 + dashGap;
-  }
-  if (t < tCut) d += ribbonSegment(g, t, tCut, maxWidth, DASH_SEGMENTS);
-  return d;
-}
-
-// --- particles -----------------------------------------------------------
-// Position travels via CSS offset-path/offset-distance (cheap, GPU-friendly).
-// Radius is driven by a single rAF loop so each particle stays sized to the
-// LOCAL taper width under it (~1.3x), shrinking toward the point and growing
-// toward the source, instead of a fixed radius that reads as a bead.
-const activeParticles = [];
-
-function spawnParticles(parent, e) {
-  const n = e.weight;
-  const dur = PARTICLE_DURATION[e.weight];
-  const maxWidth = STROKE_WIDTH[e.weight];
-  const color = e.isOpportunity ? 'var(--opportunity)' : `var(--${e.type})`;
-  for (let i = 0; i < n; i++) {
-    const el = parent.append('circle')
-      .attr('class', 'particle')
-      .style('fill', color)
-      .style('offset-path', `path('${pathD(e._geo)}')`)
-      .style('animation-duration', dur + 's')
-      .style('animation-delay', (-(i / n) * dur) + 's')
-      .node();
-    activeParticles.push({ el, maxWidth, duration: dur, phase: i / n, isOpportunity: !!e.isOpportunity });
-  }
-}
-
-function tickParticles(ts) {
-  const seconds = ts / 1000;
-  activeParticles.forEach(p => {
-    const t = (((seconds / p.duration) + p.phase) % 1 + 1) % 1;
-    const w = widthAt(t, p.maxWidth);
-    p.el.setAttribute('r', Math.max(0.5, (w * 1.3) / 2));
-  });
-  requestAnimationFrame(tickParticles);
-}
-requestAnimationFrame(tickParticles);
+// resolve Step 2 for every node once, at load, using the fixed default layout
+NODES.forEach(n => resolveNodeAttachments(n.id));
 
 // shared builder for both data edges and opportunity edges
 function buildEdgeVisuals(sel) {
@@ -1155,9 +1070,9 @@ function buildEdgeVisuals(sel) {
       .attr('d', taperedPath(d))
       .attr('fill', color);
 
-    // invisible carrier for the SVG <marker> arrowhead: the marker attaches
-    // to this path's final vertex (the true tip) and is oriented and scaled
-    // automatically by the browser — no hand-computed angle/geometry needed
+    // invisible carrier for the SVG <marker> arrowhead — the marker
+    // attaches to this path's final vertex and is oriented/scaled
+    // automatically by the browser
     g.append('path')
       .attr('class', 'edge-marker')
       .attr('d', pathD(d._geo))
@@ -1183,10 +1098,11 @@ function refreshEdgeGeometry(e) {
   computeGeometry(e);
   const g = d3.select('#' + e._id);
   if (g.empty()) return; // opportunity edge currently unmounted
-  g.select('.edge-hit').attr('d', pathD(e._geo));
+  const d = pathD(e._geo);
+  g.select('.edge-hit').attr('d', d);
   g.select('.edge-line').attr('d', taperedPath(e));
-  g.select('.edge-marker').attr('d', pathD(e._geo));
-  g.selectAll('.particle').style('offset-path', `path('${pathD(e._geo)}')`);
+  g.select('.edge-marker').attr('d', d);
+  g.selectAll('.particle').style('offset-path', `path('${d}')`);
 }
 
 function setEdgeHighlight(activeId) {
@@ -1229,10 +1145,19 @@ nodeGroups
     hideTooltip();
   });
 
+/* ---------------- STEP 7: live recomputation on drag ---------------- */
+// Scoped to the dragged node only: re-run Step 2 for just this node (its
+// touching edges' attachment points AT this node), then rebuild geometry
+// for those same edges. The far end of each touching edge keeps whatever
+// attachment point it already had — its own node didn't move, and re-
+// resolving it too isn't needed for correctness, only for an already-solved
+// ordering that hasn't changed, so skipping it keeps drag responsive even
+// on a fully-connected graph.
 function dragged(event, d) {
   d.x = event.x;
   d.y = event.y;
   d3.select(this).attr('transform', `translate(${d.x},${d.y})`);
+  resolveNodeAttachments(d.id);
   ALL_EDGES.forEach(e => {
     if (e.source === d.id || e.target === d.id) refreshEdgeGeometry(e);
   });
@@ -1245,7 +1170,6 @@ function dragged(event, d) {
 function renderOpportunityEdges() {
   const active = document.getElementById('opp-toggle').classList.contains('on');
 
-  // drop stale opportunity particles from the tick loop before re-adding
   for (let i = activeParticles.length - 1; i >= 0; i--) {
     if (activeParticles[i].isOpportunity) activeParticles.splice(i, 1);
   }
