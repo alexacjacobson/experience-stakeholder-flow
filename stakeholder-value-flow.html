@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BPM — Stakeholder Value-Flow</title>
+<title>Tend: Stakeholder Map</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -13,22 +13,26 @@
      edit here swaps the whole scheme.
      ============================================================ */
   :root {
-    --bg:          #FFFFFF;
-    --node-fill:   #FFFFFF;
-    --node-stroke: #1E1E1E;
-    --ghost:       #E4E4E4;   /* toggled-off edges */
-    --text:        #1E1E1E;
-    --text-dim:    #6A6A6A;
-    --opportunity: #1E1E1E;   /* black — opportunity arrows sit above the data layer */
+    /* six-color closed palette — every color anywhere in this file must
+       be one of these six values */
+    --bg:          #F9EFE6;
+    --node-fill:   #F9EFE6;
+    --node-stroke: #223A23;
+    --text:        #223A23;
+    --text-dim:    #597739;
+    --lime:        #C5E65A;   /* Opportunities only */
 
-    /* five value types, muted */
-    --emotional:   #B87F9E;
-    --financial:   #7FA37A;
-    --functional:  #C77A4F;
-    --identity:    #B8A661;
-    --meaningful:  #6E8FA8;
+    /* five value types — Emotional and Identity now use the two hex
+       values freed up by the background switching from gradient to image */
+    --emotional:   #D8DFE1;
+    --financial:   #223A23;
+    --functional:  #597739;
+    --identity:    #F9EFE6;
+    --meaningful:  #2822C3;
 
-    --shadow: drop-shadow(0 2px 4px rgba(0,0,0,0.18));
+    --shadow: drop-shadow(0 2px 4px rgba(0,0,0,0.18));   /* edges only — unchanged, not in the six-color set (not requested to change) */
+    --shadow-ui: 0 4px 16px rgba(0, 0, 0, 0.15);          /* node cards, pills, tooltip — exact literal spec given, not in the six-color set */
+    --glow-node: 0 0 24px 8px rgba(34, 58, 35, 0.35);     /* dark-green glow behind node cards, in addition to --shadow-ui */
 
     --font-head: 'Bricolage Grotesque', -apple-system, sans-serif;
     --font-body: 'Inter', -apple-system, sans-serif;
@@ -41,6 +45,10 @@
     margin: 0;
     padding: 0;
     background: var(--bg);
+    background-image: url('Components/background.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
     color: var(--text);
     font-family: var(--font-body);
     height: 100%;
@@ -49,7 +57,7 @@
 
   #app {
     display: grid;
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto 1fr;
     height: 100vh;
     width: 100vw;
   }
@@ -62,35 +70,34 @@
     font-family: var(--font-head);
     font-weight: 400;
     font-style: normal;
-    font-size: 22px;
+    font-size: 32px;
     letter-spacing: 0.01em;
     margin: 0;
     color: var(--text);
+    text-align: center;
   }
 
   /* ============================================================
-     CONTROLS — value-layer pills (row 1) and opportunities toggle
-     (row 2), stacked with spacing only. No rules or dividers.
+     CONTROLS — vertical column overlaying the left edge of the canvas,
+     starting below the header. Order top to bottom: Opportunities,
+     then the "Value layers" label, then the 5 value-type pills.
      ============================================================ */
   #controls {
-    display: flex;
-    align-items: center;
-    gap: 22px;
-    padding: 4px 36px 16px;
-    flex-wrap: wrap;
-  }
-
-  #controls-rows {
+    position: absolute;
+    top: 24px;
+    left: 28px;
+    z-index: 5;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     gap: 10px;
   }
 
-  .controls-row {
+  #value-toggles {
     display: flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-start;
     gap: 8px;
-    flex-wrap: wrap;
   }
 
   .group-label {
@@ -99,7 +106,6 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--text-dim);
-    margin-right: 4px;
   }
 
   .pill {
@@ -113,7 +119,18 @@
     font-weight: 400;
     cursor: pointer;
     transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
-    filter: var(--shadow);
+    box-shadow: var(--shadow-ui);
+  }
+
+  #opp-toggle {
+    gap: 6px;
+  }
+
+  .opp-star {
+    flex: none;
+    height: 9px;
+    width: auto;
+    color: inherit;
   }
 
   /* ============================================================
@@ -130,18 +147,26 @@
     display: block;
   }
 
-  /* node cards */
+  /* node cards — rendered as an HTML div inside a <foreignObject> rather
+     than a plain SVG <rect>, because box-shadow does not paint on SVG
+     shape geometry in any browser (verified empirically). The foreignObject
+     itself carries the exact x/y/width/height the rect used to — the card's
+     footprint that attachment-point math depends on is unchanged; only the
+     fill technique changed. Solid opaque fill — no glass/blur. */
   .node-card {
-    fill: var(--node-fill);
-    stroke: var(--node-stroke);
-    stroke-width: 1.5px;
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    background: var(--node-fill);
+    border: 1.5px solid var(--node-stroke);
+    border-radius: 8px;
+    box-shadow: var(--shadow-ui), var(--glow-node);
     cursor: grab;
-    transition: stroke 0.2s ease, stroke-width 0.2s ease;
-    filter: var(--shadow);
+    transition: border-width 0.2s ease;
   }
 
   .node-card.highlight {
-    stroke-width: 2.5px;
+    border-width: 2.5px;
   }
 
   .node-card:active { cursor: grabbing; }
@@ -230,7 +255,7 @@
     transform: translate(-50%, calc(-100% - 12px));
     transition: opacity 0.12s ease;
     z-index: 50;
-    filter: var(--shadow);
+    box-shadow: var(--shadow-ui);
   }
 
   #tooltip.visible { opacity: 1; }
@@ -368,22 +393,20 @@
 <body>
 <div id="app">
   <header>
-    <h1>Stakeholder Value-Flow — BPM</h1>
+    <h1>Tend: Stakeholder Map</h1>
   </header>
 
-  <div id="controls">
-    <div id="controls-rows">
-      <div id="value-toggles" class="controls-row">
-        <span class="group-label">Value layers</span>
-        <!-- pills injected by JS -->
-      </div>
-      <div id="opportunity-row" class="controls-row">
-        <button class="pill" id="opp-toggle">Opportunities</button>
-      </div>
-    </div>
-  </div>
-
   <div id="canvas-wrap">
+    <div id="controls">
+      <button class="pill" id="opp-toggle">
+        <svg class="opp-star" viewBox="0 0 13 14" aria-hidden="true"><path d="M2.33837 3.43801C2.90064 3.92709 3.455 4.2304 4.04978 4.55425C4.6054 4.87631 5.1287 5.2493 5.62082 5.81489C6.66934 7.05051 6.59006 7.42438 7.82589 8.78059C7.842 8.79862 7.85793 8.81655 7.87368 8.83437C8.76045 9.83644 9.41359 10.9876 9.91989 11.7341C10.1143 12.0227 10.2825 12.2479 10.409 12.3368C10.4589 12.3727 10.4976 12.3936 10.4879 12.3822C10.4887 12.3822 10.4874 12.3761 10.4329 12.3552C10.3922 12.3448 10.2585 12.2833 10.0285 12.3747C9.81084 12.473 9.7474 12.6352 9.73189 12.6839C9.71415 12.7445 9.72152 12.7579 9.7259 12.7639C9.75095 12.7713 9.7819 12.6655 9.79863 12.5659C9.83285 12.354 9.82883 12.0541 9.67087 11.582C9.30851 10.5134 9.15518 9.828 9.03761 8.81634C9.03055 8.75532 9.02188 8.68723 9.01204 8.61322C8.86794 7.46636 8.24363 4.7566 7.79685 3.80158C7.62821 3.43248 7.50306 3.02958 7.39636 2.63656C7.27039 2.14077 7.23684 1.64589 7.23765 1.23262C7.24463 1.01495 7.2541 0.830788 7.24872 0.667749C7.24172 0.432366 7.23803 0.244864 7.24052 0.0993298C7.24146 0.0374065 7.26071 0.00537348 7.28498 0.000561904C7.285 0.000558902 7.28501 0.000555899 7.28503 0.000552897C7.31525 -0.0050618 7.3534 0.0323357 7.37104 0.109376C7.43492 0.378693 7.51112 0.759696 7.60255 1.19183C7.64426 1.3449 7.69615 1.51007 7.76012 1.67782C7.87928 1.98895 7.96961 2.21769 8.04192 2.42617C8.25476 3.00167 8.28403 3.42266 8.69549 4.58984C9.18144 5.991 9.59394 6.88147 9.90781 8.40256C9.95129 8.61857 9.99628 8.84907 10.0419 9.0968C10.1943 9.9169 10.4165 10.4445 10.6388 10.9991C10.7498 11.277 10.8637 11.562 10.9635 11.9098C11.0129 12.0874 11.0609 12.2746 11.0897 12.5224C11.0982 12.6611 11.1309 12.7683 11.0645 13.0777C11.0435 13.1504 11.0134 13.2726 10.8896 13.4284C10.776 13.592 10.4598 13.7437 10.2623 13.7298C9.8535 13.7019 9.79969 13.5938 9.68382 13.5286C9.1937 13.1119 9.11048 12.8123 8.89423 12.4428C8.88589 12.4272 8.87749 12.4115 8.86904 12.3956C8.07552 10.8819 7.5076 10.3511 6.78899 9.72808C6.31125 9.31676 5.76904 8.8531 5.01577 8.06847C4.34197 7.37363 3.61414 6.55582 2.92096 5.91271C2.05955 5.13598 1.20293 4.31361 0.636018 4.1201C0.640077 4.12097 0.631905 4.11932 0.665535 4.12709C0.668258 4.12751 0.683369 4.13174 0.72514 4.13797C0.750558 4.14047 0.772754 4.14806 0.8754 4.1452C0.891393 4.1443 0.896065 4.14445 0.929953 4.14079C0.984447 4.13233 1.05876 4.12875 1.20462 4.05702C1.3375 4.0014 1.61836 3.74844 1.6339 3.40694C1.64794 3.07958 1.51731 2.92856 1.46151 2.85045C1.22235 2.59985 1.22914 2.66606 1.19016 2.63256C1.13453 2.6063 1.13828 2.60977 1.12675 2.60487C1.11651 2.60099 1.1145 2.60037 1.11192 2.59947C1.10617 2.5976 1.10983 2.59907 1.11167 2.59986C1.11665 2.6019 1.12401 2.60474 1.13096 2.60744C1.14536 2.61302 1.16061 2.61891 1.17574 2.6248C1.20613 2.63664 1.23679 2.64876 1.26763 2.6612C1.32906 2.686 1.39086 2.71185 1.45449 2.74013C1.82585 2.90511 2.25573 3.04873 2.57857 3.14968C3.75759 3.51235 5.26247 3.95395 6.85077 4.58581C7.40637 4.80709 7.98774 5.02981 8.57952 5.26516C9.62033 5.69015 10.7962 6.02763 12.0604 6.64459C12.1251 6.6805 12.1842 6.70393 12.318 6.81262C12.3536 6.84388 12.3945 6.87803 12.4577 6.95948C12.5087 7.03797 12.6351 7.17354 12.6293 7.51106C12.61 7.86683 12.3739 8.07662 12.2826 8.13909C12.1769 8.21308 12.1137 8.23485 12.0646 8.25434C11.7429 8.35307 11.7048 8.3262 11.6039 8.34455C11.099 8.39673 10.6685 8.49643 10.1707 8.63724C9.44982 8.84071 8.73043 9.02458 8.028 9.17552C7.18278 9.36581 6.16324 9.54542 5.33734 9.83956C4.88909 10.0153 4.38904 10.2725 3.91021 10.5014C3.66882 10.6173 3.42811 10.7324 3.17817 10.8385C3.04886 10.8923 2.93061 10.9428 2.75766 10.9919C2.71477 11.0033 2.66258 11.0168 2.59321 11.0249C2.54665 11.0292 2.51458 11.0344 2.42714 11.0243C2.38273 11.018 2.33199 11.007 2.2698 10.9776C2.19464 10.943 2.10755 10.8723 2.05573 10.7808C1.95779 10.6021 1.99308 10.4682 2.00329 10.413C2.02152 10.3392 2.0362 10.3125 2.05193 10.2786C2.08818 10.207 2.10619 10.1844 2.13647 10.1408C2.69202 9.43625 3.18291 8.96755 3.47731 8.54887C3.57204 8.4204 3.65349 8.29838 3.72358 8.18131C4.40694 7.02047 4.63295 6.58073 5.31157 5.23862C5.3778 5.10876 5.449 4.97512 5.52715 4.83474C5.95633 4.06403 6.4931 3.12999 6.97556 2.31895C7.24434 1.83397 7.31789 1.98015 7.14584 2.53258C6.88697 3.326 6.52679 3.90625 6.44712 4.3477C6.38059 4.70774 6.322 4.98199 6.22948 5.24032C6.10067 5.60709 5.91167 5.93367 5.53027 6.43951C4.88925 7.29586 4.99852 7.90707 4.68084 8.44778C4.64532 8.50849 4.61132 8.56119 4.57718 8.61091C4.3318 8.98077 3.98853 9.2802 2.96678 10.696C2.95776 10.7098 2.955 10.7274 2.97598 10.6785C2.97885 10.6376 3.0412 10.6146 2.97145 10.3527C2.93776 10.2393 2.80615 10.0991 2.70537 10.0584C2.62162 10.0191 2.56465 10.0133 2.52537 10.01C2.34472 10.017 2.47892 10.0054 2.51757 9.97645C2.63714 9.92013 2.7915 9.83369 2.95224 9.73842C3.61024 9.34772 4.17772 8.96213 4.80027 8.64349C6.73082 7.83029 7.81751 7.62967 8.69028 7.32953C8.96591 7.24348 9.31823 7.14917 9.72059 7.04574C10.2021 6.91894 10.8381 6.79403 11.4464 6.76248C11.5238 6.76206 11.6628 6.73214 11.5245 6.77236C11.4973 6.78354 11.4604 6.79415 11.378 6.84899C11.3091 6.89764 11.1039 7.04925 11.0612 7.38023C11.0368 7.70308 11.1575 7.83528 11.1971 7.89972C11.2486 7.96761 11.2741 7.98635 11.2931 8.00345C11.3606 8.05619 11.3394 8.03318 11.3253 8.02629C10.6889 7.66711 9.89299 7.36182 9.17729 7.12585C8.43302 6.88058 7.36787 6.52192 6.26001 6.09532C4.69592 5.48838 3.00581 4.9499 2.07721 4.71531C1.50099 4.56864 1.14997 4.44847 0.823913 4.2843C0.783726 4.26086 0.7409 4.23657 0.698108 4.21216C0.676709 4.19996 0.655323 4.18773 0.633358 4.17525C0.622374 4.16901 0.611408 4.16277 0.599554 4.15619C0.593284 4.15279 0.587724 4.14962 0.579043 4.14535C0.573905 4.14292 0.571598 4.14156 0.556116 4.13533C0.548585 4.13231 0.553742 4.13449 0.524075 4.1225C0.51671 4.11944 0.507604 4.11568 0.491632 4.10837C0.483799 4.10466 0.495741 4.11059 0.46645 4.09632C0.428093 4.06595 0.424324 4.11312 0.205534 3.89349C0.151689 3.82392 0.0481386 3.71692 0.00876236 3.44493C-0.0448504 3.17044 0.159023 2.7882 0.333947 2.68273C0.674828 2.46164 0.77925 2.53119 0.782668 2.51506C0.840812 2.5115 0.871446 2.51374 0.895944 2.5152C1.04744 2.5316 1.01337 2.53401 1.0294 2.53552C1.05896 2.54295 1.05565 2.54277 1.06316 2.54503C1.52163 2.74263 1.82715 3.00592 2.33837 3.43801Z" fill="currentColor"/></svg>
+        <span>Opportunities</span>
+        <svg class="opp-star" viewBox="0 0 13 14" aria-hidden="true"><path d="M2.33837 3.43801C2.90064 3.92709 3.455 4.2304 4.04978 4.55425C4.6054 4.87631 5.1287 5.2493 5.62082 5.81489C6.66934 7.05051 6.59006 7.42438 7.82589 8.78059C7.842 8.79862 7.85793 8.81655 7.87368 8.83437C8.76045 9.83644 9.41359 10.9876 9.91989 11.7341C10.1143 12.0227 10.2825 12.2479 10.409 12.3368C10.4589 12.3727 10.4976 12.3936 10.4879 12.3822C10.4887 12.3822 10.4874 12.3761 10.4329 12.3552C10.3922 12.3448 10.2585 12.2833 10.0285 12.3747C9.81084 12.473 9.7474 12.6352 9.73189 12.6839C9.71415 12.7445 9.72152 12.7579 9.7259 12.7639C9.75095 12.7713 9.7819 12.6655 9.79863 12.5659C9.83285 12.354 9.82883 12.0541 9.67087 11.582C9.30851 10.5134 9.15518 9.828 9.03761 8.81634C9.03055 8.75532 9.02188 8.68723 9.01204 8.61322C8.86794 7.46636 8.24363 4.7566 7.79685 3.80158C7.62821 3.43248 7.50306 3.02958 7.39636 2.63656C7.27039 2.14077 7.23684 1.64589 7.23765 1.23262C7.24463 1.01495 7.2541 0.830788 7.24872 0.667749C7.24172 0.432366 7.23803 0.244864 7.24052 0.0993298C7.24146 0.0374065 7.26071 0.00537348 7.28498 0.000561904C7.285 0.000558902 7.28501 0.000555899 7.28503 0.000552897C7.31525 -0.0050618 7.3534 0.0323357 7.37104 0.109376C7.43492 0.378693 7.51112 0.759696 7.60255 1.19183C7.64426 1.3449 7.69615 1.51007 7.76012 1.67782C7.87928 1.98895 7.96961 2.21769 8.04192 2.42617C8.25476 3.00167 8.28403 3.42266 8.69549 4.58984C9.18144 5.991 9.59394 6.88147 9.90781 8.40256C9.95129 8.61857 9.99628 8.84907 10.0419 9.0968C10.1943 9.9169 10.4165 10.4445 10.6388 10.9991C10.7498 11.277 10.8637 11.562 10.9635 11.9098C11.0129 12.0874 11.0609 12.2746 11.0897 12.5224C11.0982 12.6611 11.1309 12.7683 11.0645 13.0777C11.0435 13.1504 11.0134 13.2726 10.8896 13.4284C10.776 13.592 10.4598 13.7437 10.2623 13.7298C9.8535 13.7019 9.79969 13.5938 9.68382 13.5286C9.1937 13.1119 9.11048 12.8123 8.89423 12.4428C8.88589 12.4272 8.87749 12.4115 8.86904 12.3956C8.07552 10.8819 7.5076 10.3511 6.78899 9.72808C6.31125 9.31676 5.76904 8.8531 5.01577 8.06847C4.34197 7.37363 3.61414 6.55582 2.92096 5.91271C2.05955 5.13598 1.20293 4.31361 0.636018 4.1201C0.640077 4.12097 0.631905 4.11932 0.665535 4.12709C0.668258 4.12751 0.683369 4.13174 0.72514 4.13797C0.750558 4.14047 0.772754 4.14806 0.8754 4.1452C0.891393 4.1443 0.896065 4.14445 0.929953 4.14079C0.984447 4.13233 1.05876 4.12875 1.20462 4.05702C1.3375 4.0014 1.61836 3.74844 1.6339 3.40694C1.64794 3.07958 1.51731 2.92856 1.46151 2.85045C1.22235 2.59985 1.22914 2.66606 1.19016 2.63256C1.13453 2.6063 1.13828 2.60977 1.12675 2.60487C1.11651 2.60099 1.1145 2.60037 1.11192 2.59947C1.10617 2.5976 1.10983 2.59907 1.11167 2.59986C1.11665 2.6019 1.12401 2.60474 1.13096 2.60744C1.14536 2.61302 1.16061 2.61891 1.17574 2.6248C1.20613 2.63664 1.23679 2.64876 1.26763 2.6612C1.32906 2.686 1.39086 2.71185 1.45449 2.74013C1.82585 2.90511 2.25573 3.04873 2.57857 3.14968C3.75759 3.51235 5.26247 3.95395 6.85077 4.58581C7.40637 4.80709 7.98774 5.02981 8.57952 5.26516C9.62033 5.69015 10.7962 6.02763 12.0604 6.64459C12.1251 6.6805 12.1842 6.70393 12.318 6.81262C12.3536 6.84388 12.3945 6.87803 12.4577 6.95948C12.5087 7.03797 12.6351 7.17354 12.6293 7.51106C12.61 7.86683 12.3739 8.07662 12.2826 8.13909C12.1769 8.21308 12.1137 8.23485 12.0646 8.25434C11.7429 8.35307 11.7048 8.3262 11.6039 8.34455C11.099 8.39673 10.6685 8.49643 10.1707 8.63724C9.44982 8.84071 8.73043 9.02458 8.028 9.17552C7.18278 9.36581 6.16324 9.54542 5.33734 9.83956C4.88909 10.0153 4.38904 10.2725 3.91021 10.5014C3.66882 10.6173 3.42811 10.7324 3.17817 10.8385C3.04886 10.8923 2.93061 10.9428 2.75766 10.9919C2.71477 11.0033 2.66258 11.0168 2.59321 11.0249C2.54665 11.0292 2.51458 11.0344 2.42714 11.0243C2.38273 11.018 2.33199 11.007 2.2698 10.9776C2.19464 10.943 2.10755 10.8723 2.05573 10.7808C1.95779 10.6021 1.99308 10.4682 2.00329 10.413C2.02152 10.3392 2.0362 10.3125 2.05193 10.2786C2.08818 10.207 2.10619 10.1844 2.13647 10.1408C2.69202 9.43625 3.18291 8.96755 3.47731 8.54887C3.57204 8.4204 3.65349 8.29838 3.72358 8.18131C4.40694 7.02047 4.63295 6.58073 5.31157 5.23862C5.3778 5.10876 5.449 4.97512 5.52715 4.83474C5.95633 4.06403 6.4931 3.12999 6.97556 2.31895C7.24434 1.83397 7.31789 1.98015 7.14584 2.53258C6.88697 3.326 6.52679 3.90625 6.44712 4.3477C6.38059 4.70774 6.322 4.98199 6.22948 5.24032C6.10067 5.60709 5.91167 5.93367 5.53027 6.43951C4.88925 7.29586 4.99852 7.90707 4.68084 8.44778C4.64532 8.50849 4.61132 8.56119 4.57718 8.61091C4.3318 8.98077 3.98853 9.2802 2.96678 10.696C2.95776 10.7098 2.955 10.7274 2.97598 10.6785C2.97885 10.6376 3.0412 10.6146 2.97145 10.3527C2.93776 10.2393 2.80615 10.0991 2.70537 10.0584C2.62162 10.0191 2.56465 10.0133 2.52537 10.01C2.34472 10.017 2.47892 10.0054 2.51757 9.97645C2.63714 9.92013 2.7915 9.83369 2.95224 9.73842C3.61024 9.34772 4.17772 8.96213 4.80027 8.64349C6.73082 7.83029 7.81751 7.62967 8.69028 7.32953C8.96591 7.24348 9.31823 7.14917 9.72059 7.04574C10.2021 6.91894 10.8381 6.79403 11.4464 6.76248C11.5238 6.76206 11.6628 6.73214 11.5245 6.77236C11.4973 6.78354 11.4604 6.79415 11.378 6.84899C11.3091 6.89764 11.1039 7.04925 11.0612 7.38023C11.0368 7.70308 11.1575 7.83528 11.1971 7.89972C11.2486 7.96761 11.2741 7.98635 11.2931 8.00345C11.3606 8.05619 11.3394 8.03318 11.3253 8.02629C10.6889 7.66711 9.89299 7.36182 9.17729 7.12585C8.43302 6.88058 7.36787 6.52192 6.26001 6.09532C4.69592 5.48838 3.00581 4.9499 2.07721 4.71531C1.50099 4.56864 1.14997 4.44847 0.823913 4.2843C0.783726 4.26086 0.7409 4.23657 0.698108 4.21216C0.676709 4.19996 0.655323 4.18773 0.633358 4.17525C0.622374 4.16901 0.611408 4.16277 0.599554 4.15619C0.593284 4.15279 0.587724 4.14962 0.579043 4.14535C0.573905 4.14292 0.571598 4.14156 0.556116 4.13533C0.548585 4.13231 0.553742 4.13449 0.524075 4.1225C0.51671 4.11944 0.507604 4.11568 0.491632 4.10837C0.483799 4.10466 0.495741 4.11059 0.46645 4.09632C0.428093 4.06595 0.424324 4.11312 0.205534 3.89349C0.151689 3.82392 0.0481386 3.71692 0.00876236 3.44493C-0.0448504 3.17044 0.159023 2.7882 0.333947 2.68273C0.674828 2.46164 0.77925 2.53119 0.782668 2.51506C0.840812 2.5115 0.871446 2.51374 0.895944 2.5152C1.04744 2.5316 1.01337 2.53401 1.0294 2.53552C1.05896 2.54295 1.05565 2.54277 1.06316 2.54503C1.52163 2.74263 1.82715 3.00592 2.33837 3.43801Z" fill="currentColor"/></svg>
+      </button>
+      <span class="group-label">Value layers</span>
+      <div id="value-toggles"><!-- pills injected by JS --></div>
+    </div>
+
     <svg id="diagram" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid meet"></svg>
 
     <div id="line-key">
@@ -412,7 +435,7 @@ const NODES = [
   { id: 'funders',     label: 'Funders',                            group: 'funding', x: 1423, y: 179,
     sentence: 'Capital in exchange for engagement. Not part of this research.',
     bullets: ['Venture funds, angels, accelerators', 'Optimize for DAU, retention, session length', 'Structurally cannot reward "use this less"'] },
-  { id: 'media',       label: 'Fitness media & influencers',        group: 'society', x: 180,  y: 207,
+  { id: 'media',       label: 'Fitness media & influencers',        group: 'society', x: 230,  y: 207,
     sentence: 'Sets the comparison bar. Contextual — not raised in interviews.',
     bullets: ['Fitness influencers, wellness press', 'Brand marketing, #fitspo', 'Transformation content'] },
   { id: 'society',     label: 'Wellness / optimization culture',    group: 'society', x: 493,  y: 261,
@@ -541,11 +564,11 @@ const VALUE_TYPES = [
 
 // Text color chosen per swatch for contrast when a pill is ON (filled).
 const PILL_ON_TEXT = {
-  emotional: '#000000',
-  financial: '#000000',
-  functional: '#000000',
-  identity: '#000000',
-  meaningful: '#000000',
+  emotional: '#223A23',
+  financial: '#F9EFE6',
+  functional: '#F9EFE6',
+  identity: '#223A23',
+  meaningful: '#F9EFE6',
 };
 
 // OPPORTUNITY ARROWS — proposed flows, not findings. Rendered exactly like a
@@ -599,7 +622,7 @@ const DASH_SEGMENTS = 6;
 const GUTTER = 4;                                   // constant clearance on top of stroke-width-based gaps
 const BOW = 14;                                     // gentle constant arc height
 const LANE_UNIT = 9;                                // px per lane step, per edge of a same-pair bundle
-const CARD_CORNER_R = 8;                            // must match the rx used on the drawn card <rect>
+const CARD_CORNER_R = 8;                            // must match the CSS border-radius on .node-card
 
 /* ---------------- STEP 1: lane assignment (fixed, permanent) ---------------- */
 // Sort every edge within its unordered-pair bundle by value type in a fixed
@@ -914,6 +937,7 @@ function taperedPath(e) {
 // a weight-3 edge gets a proportionally larger — but still delicate — one.
 const markerDefs = svg.append('defs');
 VALUE_TYPES.map(v => v.id).concat(['opportunity']).forEach(type => {
+  const colorVar = type === 'opportunity' ? 'lime' : type;
   markerDefs.append('marker')
     .attr('id', 'arrow-' + type)
     .attr('viewBox', '0 0 10 10')
@@ -926,7 +950,7 @@ VALUE_TYPES.map(v => v.id).concat(['opportunity']).forEach(type => {
     .append('path')
     .attr('d', 'M 1.5 1.5 L 8 5 L 1.5 8.5')
     .attr('fill', 'none')
-    .attr('stroke', `var(--${type})`)
+    .attr('stroke', `var(--${colorVar})`)
     .attr('stroke-width', 1.2)
     .attr('stroke-linecap', 'round')
     .attr('stroke-linejoin', 'round');
@@ -941,7 +965,7 @@ function spawnParticles(parent, e) {
   const n = e.weight;
   const dur = PARTICLE_DURATION[e.weight];
   const maxWidth = STROKE_WIDTH[e.weight];
-  const color = e.isOpportunity ? 'var(--opportunity)' : `var(--${e.type})`;
+  const color = e.isOpportunity ? 'var(--lime)' : `var(--${e.type})`;
   for (let i = 0; i < n; i++) {
     const el = parent.append('circle')
       .attr('class', 'particle')
@@ -1013,15 +1037,24 @@ nodeGroups.each(function (d) {
   d._cardW = cardW;
   d._cardH = cardH;
 
-  g.insert('rect', ':first-child')
-    .attr('class', 'node-card')
+  // foreignObject, not <rect>: box-shadow doesn't paint on SVG shape
+  // geometry, so the card needs a real HTML box. The foreignObject's
+  // x/y/width/height match exactly what the rect used to occupy — the
+  // footprint attachment math depends on is unchanged.
+  g.insert('foreignObject', ':first-child')
     .attr('x', -cardW / 2)
     .attr('y', -cardH / 2)
     .attr('width', cardW)
     .attr('height', cardH)
-    .attr('rx', 8);
+    .append('xhtml:div')
+    .attr('class', 'node-card');
 
-  titleText.attr('y', -contentHeight / 2);
+  // dominant-baseline: hanging' nominal top doesn't exactly match the
+  // font's true ink top (font-metric dependent, a few px off), so derive
+  // the y-shift from the MEASURED bbox rather than assuming contentHeight
+  // alone centers it — this lands the ink's actual vertical midpoint, not
+  // just its nominal em-box midpoint, on the card's true center (y=0)
+  titleText.attr('y', -(titleBBox.y + contentHeight / 2));
 });
 
 // resolve Step 2 for every node once, at load, using the fixed default layout
@@ -1032,7 +1065,7 @@ function buildEdgeVisuals(sel) {
   sel.each(function (d) {
     computeGeometry(d);
     const g = d3.select(this);
-    const color = d.isOpportunity ? 'var(--opportunity)' : `var(--${d.type})`;
+    const color = d.isOpportunity ? 'var(--lime)' : `var(--${d.type})`;
 
     g.append('path')
       .attr('class', 'edge-hit')
@@ -1157,25 +1190,26 @@ function renderOpportunityEdges() {
 }
 
 // ON: filled with the pill's own color, contrast text, no border.
-// OFF: white fill, border + text in the pill's own color — color identity
-// stays legible either way; only the fill/text relationship flips.
+// OFF: transparent fill (background.jpg shows through), border + text in
+// the pill's own color — color identity stays legible either way; only
+// the fill/text relationship flips.
 function paintPill(btn, colorVar, onTextColor, isOn) {
   if (isOn) {
     btn.style.background = `var(--${colorVar})`;
     btn.style.color = onTextColor;
     btn.style.borderColor = 'transparent';
   } else {
-    btn.style.background = '#FFFFFF';
+    btn.style.background = 'transparent';
     btn.style.color = `var(--${colorVar})`;
     btn.style.borderColor = `var(--${colorVar})`;
   }
 }
 
-paintPill(document.getElementById('opp-toggle'), 'opportunity', '#FFFFFF', false);
+paintPill(document.getElementById('opp-toggle'), 'lime', 'var(--text)', false);
 
 document.getElementById('opp-toggle').addEventListener('click', function () {
   const isOn = this.classList.toggle('on');
-  paintPill(this, 'opportunity', '#FFFFFF', isOn);
+  paintPill(this, 'lime', 'var(--text)', isOn);
   renderOpportunityEdges();
 });
 
@@ -1227,7 +1261,7 @@ function hideTooltip() {
 function edgeTooltipHtml(d) {
   const srcLabel = nodeById(d.source).label;
   const tgtLabel = nodeById(d.target).label;
-  const swatchColor = d.isOpportunity ? 'var(--opportunity)' : `var(--${d.type})`;
+  const swatchColor = d.isOpportunity ? 'var(--lime)' : `var(--${d.type})`;
   let html = `<div class="t-route">${srcLabel} → ${tgtLabel}</div>`;
   html += `<div class="t-verb">${d.verb}</div>`;
   html += `<div class="t-type"><span class="t-swatch" style="background:${swatchColor}"></span>${d.type[0].toUpperCase() + d.type.slice(1)}</div>`;
