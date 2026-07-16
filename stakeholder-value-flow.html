@@ -32,7 +32,6 @@
 
     --shadow: drop-shadow(0 2px 4px rgba(0,0,0,0.18));   /* edges only — unchanged, not in the six-color set (not requested to change) */
     --shadow-ui: 0 4px 16px rgba(0, 0, 0, 0.15);          /* node cards, pills, tooltip — exact literal spec given, not in the six-color set */
-    --glow-node: 0 0 24px 8px rgba(34, 58, 35, 0.35);     /* dark-green glow behind node cards, in addition to --shadow-ui */
 
     --font-head: 'Bricolage Grotesque', -apple-system, sans-serif;
     --font-body: 'Inter', -apple-system, sans-serif;
@@ -122,8 +121,61 @@
     box-shadow: var(--shadow-ui);
   }
 
+  /* Shared liquid-glass treatment — node cards and tooltips get the full
+     background/border/blur from this class. The Opportunities button gets
+     only the blur + highlight (see #opp-toggle below), NOT the
+     background/border here, since its fill/border are driven by inline
+     styles per ON/OFF toggle state (paintPill) and a class-level background
+     would never be visible under them anyway.
+     No color value in here is green — any green cast visible on a card
+     edge is the blurred background.jpg image itself showing through the
+     translucent border/fill via backdrop-filter, not a leftover CSS rule
+     (confirmed: --node-fill/--node-stroke are defined but unused nowhere
+     in this file, and every value below is neutral/cream).
+     Top-highlight is a ::before pseudo-element, NOT an inset box-shadow —
+     isolated by testing that an inset box-shadow combined with
+     backdrop-filter bleeds a visible light halo OUTSIDE the element's own
+     border (confirmed: removing only the inset shadows removed the halo,
+     the outer drop shadow alone was always clean). A gradient painted on a
+     clipped pseudo-element achieves the same top-bright/bottom-faint look
+     without touching box-shadow at all. */
+  .glass-surface {
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(
+      180deg,
+      rgba(249, 239, 230, 0.35) 0%,
+      rgba(249, 239, 230, 0.15) 100%
+    );
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+
+  .glass-surface::before,
+  #opp-toggle::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.6) 0%,
+      rgba(255, 255, 255, 0) 40%,
+      rgba(255, 255, 255, 0) 85%,
+      rgba(0, 0, 0, 0.05) 100%
+    );
+    pointer-events: none;
+  }
+
   #opp-toggle {
+    position: relative;
+    overflow: hidden;
     gap: 6px;
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   }
 
   .opp-star {
@@ -148,25 +200,32 @@
   }
 
   /* node cards — rendered as an HTML div inside a <foreignObject> rather
-     than a plain SVG <rect>, because box-shadow does not paint on SVG
-     shape geometry in any browser (verified empirically). The foreignObject
-     itself carries the exact x/y/width/height the rect used to — the card's
-     footprint that attachment-point math depends on is unchanged; only the
-     fill technique changed. Solid opaque fill — no glass/blur. */
+     than a plain SVG <rect>, because box-shadow/border don't paint on SVG
+     shape geometry in any browser (verified empirically). The
+     foreignObject itself carries the exact x/y/width/height the rect used
+     to — the card's footprint that attachment-point math depends on is
+     unchanged; only the fill technique changed.
+     Final spec: transparent fill, dark green outline, neutral drop shadow,
+     no blur, no glass, no lime/cream tint. Replaces all prior card
+     treatments (glass, lime-tint+blur) in full. */
   .node-card {
     box-sizing: border-box;
     width: 100%;
     height: 100%;
-    background: var(--node-fill);
+    background: transparent;
     border: 1.5px solid var(--node-stroke);
-    border-radius: 8px;
-    box-shadow: var(--shadow-ui), var(--glow-node);
+    border-radius: 10px;
+    box-shadow: 0px 4px 16px rgba(0, 0, 0, 0.15);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     cursor: grab;
-    transition: border-width 0.2s ease;
+    transition: box-shadow 0.2s ease;
   }
 
+  /* Resting and hover intentionally look the same, per spec — no added
+     border/glow/fill on hover. Shadow deepens slightly as the only cue. */
   .node-card.highlight {
-    border-width: 2.5px;
+    box-shadow: 0px 6px 20px rgba(0, 0, 0, 0.2);
   }
 
   .node-card:active { cursor: grabbing; }
@@ -174,7 +233,7 @@
   .node-title {
     font-family: var(--font-head);
     font-size: 15px;
-    fill: var(--text);
+    fill: #1E1E1E;
     pointer-events: none;
   }
 
@@ -244,8 +303,6 @@
     position: fixed;
     pointer-events: none;
     max-width: 320px;
-    background: var(--node-fill);
-    border: 1px solid var(--node-stroke);
     border-radius: 6px;
     padding: 10px 12px;
     font-size: 12px;
@@ -255,7 +312,6 @@
     transform: translate(-50%, calc(-100% - 12px));
     transition: opacity 0.12s ease;
     z-index: 50;
-    box-shadow: var(--shadow-ui);
   }
 
   #tooltip.visible { opacity: 1; }
@@ -417,7 +473,7 @@
   </div>
 </div>
 
-<div id="tooltip"></div>
+<div id="tooltip" class="glass-surface"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script>
@@ -622,7 +678,7 @@ const DASH_SEGMENTS = 6;
 const GUTTER = 4;                                   // constant clearance on top of stroke-width-based gaps
 const BOW = 14;                                     // gentle constant arc height
 const LANE_UNIT = 9;                                // px per lane step, per edge of a same-pair bundle
-const CARD_CORNER_R = 8;                            // must match the CSS border-radius on .node-card
+const CARD_CORNER_R = 10;                           // must match the CSS border-radius on .node-card
 
 /* ---------------- STEP 1: lane assignment (fixed, permanent) ---------------- */
 // Sort every edge within its unordered-pair bundle by value type in a fixed
