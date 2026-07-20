@@ -69,7 +69,7 @@
     font-family: var(--font-head);
     font-weight: 400;
     font-style: normal;
-    font-size: 32px;
+    font-size: 42px;
     letter-spacing: 0.01em;
     margin: 0;
     color: var(--text);
@@ -395,55 +395,47 @@
   }
 
   /* ============================================================
-     LINE-TYPE KEY — quiet corner widget on the canvas itself.
-     Color is already communicated by the value-layer pill fills,
-     so this only explains line treatment (solid/dashed/weight).
+     VIEW SWITCHER — Map/List segmented control, fixed top-right.
+     Neutral dark-green pill, deliberately outside the five edge
+     colors used for the value-type pills.
      ============================================================ */
-  #line-key {
-    position: absolute;
-    left: 28px;
-    bottom: 22px;
+  .view-switcher {
+    position: fixed;
+    top: 24px;
+    right: 28px;
+    z-index: 60;
     display: flex;
-    flex-direction: column;
-    gap: 7px;
-    pointer-events: none;
+    border: 1.5px solid #223A23;
+    border-radius: 999px;
+    overflow: hidden;
+    box-shadow: var(--shadow-ui);
   }
 
-  .key-item {
-    display: flex;
+  .view-switch-half {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-family: var(--font-body);
-    font-size: 10.5px;
-    color: var(--text-dim);
-    white-space: nowrap;
+    padding: 7px 14px;
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    text-decoration: none;
+    color: #223A23;
+    background: transparent;
+    transition: background 0.2s ease, color 0.2s ease;
   }
 
-  .key-line {
-    width: 18px;
-    height: 0;
-    border-top: 1.4px solid var(--text-dim);
-    flex: none;
+  .view-switch-half svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
   }
 
-  .key-line.dashed {
-    border-top-style: dashed;
+  .view-switch-half.active {
+    background: #223A23;
+    color: #FFFFFF;
   }
 
-  .key-weights {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    flex: none;
-  }
-
-  .key-weights i {
-    display: block;
-    width: 14px;
-    height: 0;
-    border-top: solid var(--text-dim);
-    font-style: normal;
-  }
 </style>
 </head>
 <body>
@@ -451,6 +443,17 @@
   <header>
     <h1>Tend: Stakeholder Map</h1>
   </header>
+
+  <div class="view-switcher">
+    <a href="stakeholder-value-flow.html" class="view-switch-half active" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-7.58 7-12a7 7 0 1 0-14 0c0 4.42 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+      <span>Map</span>
+    </a>
+    <a href="stakeholder-reference.html" class="view-switch-half">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+      <span>List</span>
+    </a>
+  </div>
 
   <div id="canvas-wrap">
     <div id="controls">
@@ -464,12 +467,6 @@
     </div>
 
     <svg id="diagram" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid meet"></svg>
-
-    <div id="line-key">
-      <span class="key-item"><span class="key-line"></span>Finding</span>
-      <span class="key-item"><span class="key-line dashed"></span>Hypothesis</span>
-      <span class="key-item"><span class="key-weights"><i style="border-top-width:1px"></i><i style="border-top-width:3px"></i><i style="border-top-width:6px"></i></span>Weight = volume</span>
-    </div>
   </div>
 </div>
 
@@ -509,8 +506,8 @@ const NODES = [
   { id: 'social',      label: 'Social circle',                      group: 'society', x: 196,  y: 604,
     sentence: 'Encouragement, and the risk of comparison.',
     bullets: ['Friends, partners, family', 'Workout buddies, running groups', 'Colleagues'] },
-  { id: 'bpm',         label: 'BPM',                                group: 'core',    x: 1203, y: 861,
-    sentence: 'Working title. Movement as something you tend to, not track.',
+  { id: 'bpm',         label: 'Tend',                               group: 'core',    x: 1203, y: 861,
+    sentence: 'Movement as something you tend to, not track.',
     bullets: ['Rings accumulate, never subtract', 'No streak to break, no failure state', 'A quiet day is a fainter ring, not a gap'] },
   { id: 'structures',  label: 'External structures',                group: 'market',  x: 592,  y: 857,
     sentence: 'Commitment devices that lower the bar to start.',
@@ -1246,9 +1243,13 @@ function renderOpportunityEdges() {
 }
 
 // ON: filled with the pill's own color, contrast text, no border.
-// OFF: transparent fill (background.jpg shows through), border + text in
-// the pill's own color — color identity stays legible either way; only
-// the fill/text relationship flips.
+// OFF: transparent fill (background.jpg shows through), border always in
+// the pill's own color (still identifies the layer). Text is normally the
+// pill's own color too, EXCEPT for the three pale colors below (Emotional,
+// Identity, Opportunities/lime) where that color is nearly invisible as
+// text against the background — those three always use dark text in OFF
+// state, border unchanged.
+const OFF_TEXT_DARK = new Set(['emotional', 'identity', 'lime']);
 function paintPill(btn, colorVar, onTextColor, isOn) {
   if (isOn) {
     btn.style.background = `var(--${colorVar})`;
@@ -1256,7 +1257,7 @@ function paintPill(btn, colorVar, onTextColor, isOn) {
     btn.style.borderColor = 'transparent';
   } else {
     btn.style.background = 'transparent';
-    btn.style.color = `var(--${colorVar})`;
+    btn.style.color = OFF_TEXT_DARK.has(colorVar) ? '#1E1E1E' : `var(--${colorVar})`;
     btn.style.borderColor = `var(--${colorVar})`;
   }
 }

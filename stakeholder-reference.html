@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tend: Stakeholder Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:          #F9EFE6;
+    --node-stroke: #223A23;
+    --text:        #1E1E1E;
+    --text-dim:    #597739;
+    --shadow-ui:   0 4px 16px rgba(0, 0, 0, 0.15);
+
+    --font-head: 'Bricolage Grotesque', -apple-system, sans-serif;
+    --font-body: 'Inter', -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: var(--bg);
+    background-image: url('Components/background.jpg');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--font-body);
+  }
+
+  header {
+    padding: 36px 36px 8px;
+    text-align: center;
+  }
+
+  header h1 {
+    font-family: var(--font-head);
+    font-weight: 400;
+    font-size: 32px;
+    letter-spacing: 0.01em;
+    margin: 0 0 6px;
+    color: var(--text);
+  }
+
+  header p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+    padding: 24px 36px 48px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .ref-card {
+    background: transparent;
+    border: 1.5px solid var(--node-stroke);
+    border-radius: 10px;
+    box-shadow: var(--shadow-ui);
+    padding: 18px 20px;
+    transition: box-shadow 0.2s ease;
+  }
+
+  .ref-card:hover {
+    box-shadow: 0px 6px 20px rgba(0, 0, 0, 0.2);
+  }
+
+  .ref-title {
+    font-family: var(--font-head);
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+
+  .ref-sentence {
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--text);
+    opacity: 0.85;
+    margin: 0 0 10px;
+  }
+
+  .ref-bullets {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .ref-bullets li {
+    font-family: var(--font-body);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+
+  .ref-bullets li::before {
+    content: '• ';
+  }
+
+  /* ============================================================
+     VIEW SWITCHER — Map/List segmented control, fixed top-right.
+     Neutral dark-green pill, deliberately outside the five edge
+     colors used for the value-type pills on the map view.
+     ============================================================ */
+  .view-switcher {
+    position: fixed;
+    top: 24px;
+    right: 28px;
+    z-index: 60;
+    display: flex;
+    border: 1.5px solid #223A23;
+    border-radius: 999px;
+    overflow: hidden;
+    box-shadow: var(--shadow-ui);
+  }
+
+  .view-switch-half {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    font-family: 'Inter', -apple-system, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    text-decoration: none;
+    color: #223A23;
+    background: transparent;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .view-switch-half svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+  }
+
+  .view-switch-half.active {
+    background: #223A23;
+    color: #FFFFFF;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tend: Stakeholder Reference</h1>
+  <p>Static glossary view — all ten stakeholders, no diagram</p>
+</header>
+
+<div class="view-switcher">
+  <a href="stakeholder-value-flow.html" class="view-switch-half">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s7-7.58 7-12a7 7 0 1 0-14 0c0 4.42 7 12 7 12z"/><circle cx="12" cy="10" r="2.5"/></svg>
+    <span>Map</span>
+  </a>
+  <a href="stakeholder-reference.html" class="view-switch-half active" aria-current="page">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+    <span>List</span>
+  </a>
+</div>
+
+<div id="grid"></div>
+
+<script>
+// Same node data as stakeholder-value-flow.html (id, label, sentence, bullets)
+// — x/y and group are omitted here since this view has no diagram layout.
+const NODES = [
+  { id: 'competitors', label: 'Competitor apps',
+    sentence: 'The incumbent design language of fitness.',
+    bullets: ['Strava, Whoop, Apple Fitness, Garmin', 'TrainingPeaks, Finch, Nike Run Club, Peloton', 'Rings, streaks, scores, PRs, leaderboards'] },
+  { id: 'funders',     label: 'Funders',
+    sentence: 'Capital in exchange for engagement. Not part of this research.',
+    bullets: ['Venture funds, angels, accelerators', 'Optimize for DAU, retention, session length', 'Structurally cannot reward "use this less"'] },
+  { id: 'media',       label: 'Fitness media & influencers',
+    sentence: 'Sets the comparison bar. Contextual — not raised in interviews.',
+    bullets: ['Fitness influencers, wellness press', 'Brand marketing, #fitspo', 'Transformation content'] },
+  { id: 'society',     label: 'Wellness / optimization culture',
+    sentence: 'Promises meaning, delivers obligation. Contextual — not named by participants.',
+    bullets: ['The quantified self', 'Hustle and self-improvement norms', '"Self-care" as another thing to fail at'] },
+  { id: 'policy',      label: 'Health data policy',
+    sentence: 'Constrains, but does not drive.',
+    bullets: ['GDPR, HIPAA-adjacent rules', 'State health data laws', 'App Store health data policy'] },
+  { id: 'platforms',   label: 'Devices & platforms',
+    sentence: 'Both supplier and competitor — Apple sits on both sides.',
+    bullets: ['Apple Watch, Apple Health, HealthKit', 'Garmin, Oura, Whoop hardware', 'Phone sensors, App Store distribution'] },
+  { id: 'user',        label: 'The User',
+    sentence: 'Six interviewees, 20s–30s, urban — lifelong athletes through reluctant movers.',
+    bullets: ['Sam — personal trainer', 'Juanita — planner, busy social life', 'Drew — structured training, lifts', 'Chloe — reluctant mover, incidental exercise', 'Kelsey — walks to work, occasional gym', 'Luis — squash coach, triathlete'] },
+  { id: 'social',      label: 'Social circle',
+    sentence: 'Encouragement, and the risk of comparison.',
+    bullets: ['Friends, partners, family', 'Workout buddies, running groups', 'Colleagues'] },
+  { id: 'bpm',         label: 'Tend',
+    sentence: 'Movement as something you tend to, not track.',
+    bullets: ['Rings accumulate, never subtract', 'No streak to break, no failure state', 'A quiet day is a fainter ring, not a gap'] },
+  { id: 'structures',  label: 'External structures',
+    sentence: 'Commitment devices that lower the bar to start.',
+    bullets: ['Booked classes, gyms, studios', 'Race organizers, run clubs', 'Personal trainers, cancellation policies'] },
+];
+
+const grid = document.getElementById('grid');
+NODES.forEach(n => {
+  const card = document.createElement('div');
+  card.className = 'ref-card';
+
+  const title = document.createElement('h2');
+  title.className = 'ref-title';
+  title.textContent = n.label;
+  card.appendChild(title);
+
+  const sentence = document.createElement('p');
+  sentence.className = 'ref-sentence';
+  sentence.textContent = n.sentence;
+  card.appendChild(sentence);
+
+  const ul = document.createElement('ul');
+  ul.className = 'ref-bullets';
+  n.bullets.forEach(b => {
+    const li = document.createElement('li');
+    li.textContent = b;
+    ul.appendChild(li);
+  });
+  card.appendChild(ul);
+
+  grid.appendChild(card);
+});
+</script>
+</body>
+</html>
